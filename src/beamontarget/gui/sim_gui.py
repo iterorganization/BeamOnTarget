@@ -836,11 +836,14 @@ class SimGUI(tk.Tk):
             set_status_fn=self._set_status,
             get_active_config_path=lambda: self._active_config_path,
             set_active_config_path=self._set_active_config_path,
-            get_smoothing_params=lambda: (
-                self._output_tab.var_sm_radius.get(),
-                self._output_tab.var_sm_mca.get().strip(),
-                self._output_tab.var_sm_angle.get(),
-            ),
+            get_smoothing_params=lambda: {
+                "method": self._output_tab.smoothing_method(),
+                "radius": self._output_tab.var_sm_radius.get(),
+                "max_cell_area": self._output_tab.var_sm_mca.get().strip(),
+                "normal_threshold_deg": self._output_tab.var_sm_angle.get(),
+                "target_rel_error": self._output_tab.var_sm_target_err.get(),
+                "max_bandwidth_m": self._output_tab.var_sm_max_bw.get(),
+            },
         )
         nb.add(self._run_tab, text="  Run  ")
 

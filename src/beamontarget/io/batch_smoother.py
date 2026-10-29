@@ -17,8 +17,15 @@ from datetime import datetime
 from tqdm import tqdm
 import argparse
 
-# Import the core smoothing function from our library file
+# Import the core smoothing functions from our library files
 from beamontarget.io.smooth_results import apply_smoothing
+from beamontarget.io.physical_smooth import (
+    apply_physical_smoothing,
+    DEFAULT_TARGET_REL_ERROR,
+    DEFAULT_MAX_BANDWIDTH_M,
+)
+
+SMOOTHING_METHODS = ("radius", "physical")
 
 # --- CONFIGURATION PANEL ---
 # This now acts as the DEFAULT input directory if none is provided via command line.
@@ -39,18 +46,39 @@ MAX_CELL_AREA = 1e-6
 
 # --- END OF CONFIGURATION ---
 
-def batch_process_directory(input_dir, radius=None, max_cell_area=None, normal_threshold_deg=7.0):
+def batch_process_directory(input_dir, radius=None, max_cell_area=None, normal_threshold_deg=7.0,
+                            method="radius", target_rel_error=None, max_bandwidth_m=None):
     """
     Finds all result files in the input directory, applies smoothing,
     and saves them to a 'SMOOTHED' subfolder within that directory.
+
+    *method* selects the smoother: "radius" (area-weighted average within
+    *radius*, see smooth_results) or "physical" (energy-conserving diffusion
+    with an error estimate, see physical_smooth; uses *target_rel_error* and
+    *max_bandwidth_m*, and ignores the radius-method parameters).
     """
+    if method not in SMOOTHING_METHODS:
+        print(f"FATAL ERROR: Unknown smoothing method '{method}'. "
+              f"Choose one of: {', '.join(SMOOTHING_METHODS)}.")
+        return
     if radius is None:
         radius = SMOOTHING_RADIUS
     if max_cell_area is None:
         max_cell_area = MAX_CELL_AREA
+    if target_rel_error is None:
+        target_rel_error = DEFAULT_TARGET_REL_ERROR
+    if max_bandwidth_m is None:
+        max_bandwidth_m = DEFAULT_MAX_BANDWIDTH_M
     if not os.path.isdir(input_dir):
         print(f"FATAL ERROR: Input directory '{input_dir}' not found.")
         return
+
+    def _smooth(mesh):
+        if method == "physical":
+            return apply_physical_smoothing(
+                mesh, target_rel_error=target_rel_error, max_bandwidth_m=max_bandwidth_m)
+        return apply_smoothing(mesh, radius=radius, max_cell_area=max_cell_area,
+                               normal_threshold_deg=normal_threshold_deg)
         
     # --- NEW: Dynamically create the output directory path ---
     output_dir = os.path.join(input_dir, "SMOOTHED")
@@ -68,8 +96,13 @@ def batch_process_directory(input_dir, radius=None, max_cell_area=None, normal_t
     print(f"--- Starting Batch Smoothing Process ---")
     print(f"Input directory:  '{input_dir}'")
     print(f"Output directory: '{output_dir}'")
-    print(f"Smoothing radius: {radius}")
-    print(f"Max cell area:    {max_cell_area}")
+    print(f"Smoothing method: {method}")
+    if method == "physical":
+        print(f"Target rel. error: {target_rel_error}")
+        print(f"Max bandwidth:     {max_bandwidth_m} m")
+    else:
+        print(f"Smoothing radius: {radius}")
+        print(f"Max cell area:    {max_cell_area}")
     print(f"Found {len(files_to_process)} files to process.")
 
     batch_t0 = time.time()
@@ -84,9 +117,7 @@ def batch_process_directory(input_dir, radius=None, max_cell_area=None, normal_t
                 processed_dataset = pv.MultiBlock()
                 combined_stats = None
                 for i in range(dataset_copy.n_blocks):
-                    smoothed_block, blk_stats = apply_smoothing(
-                        dataset_copy[i], radius=radius, max_cell_area=max_cell_area,
-                        normal_threshold_deg=normal_threshold_deg)
+                    smoothed_block, blk_stats = _smooth(dataset_copy[i])
                     processed_dataset.append(smoothed_block)
                     if blk_stats is not None:
                         if combined_stats is None:
@@ -111,9 +142,7 @@ def batch_process_directory(input_dir, radius=None, max_cell_area=None, normal_t
                 final_dataset = processed_dataset
                 stats = combined_stats
             else:
-                final_dataset, stats = apply_smoothing(
-                    dataset_copy, radius=radius, max_cell_area=max_cell_area,
-                    normal_threshold_deg=normal_threshold_deg)
+                final_dataset, stats = _smooth(dataset_copy)
 
 
             original_filename = os.path.basename(input_path)
@@ -139,8 +168,14 @@ def batch_process_directory(input_dir, radius=None, max_cell_area=None, normal_t
             f.write(f"  Date              : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"  Input directory   : {input_dir}\n")
             f.write(f"  Output directory  : {output_dir}\n")
-            f.write(f"  Smoothing radius  : {radius} m\n")
-            f.write(f"  Max cell area     : {max_cell_area}\n")
+            f.write(f"  Smoothing method  : {method}\n")
+            if method == "physical":
+                f.write(f"  Target rel. error : {target_rel_error}\n")
+                f.write(f"  Max bandwidth     : {max_bandwidth_m} m\n")
+            else:
+                f.write(f"  Smoothing radius  : {radius} m\n")
+                f.write(f"  Max cell area     : {max_cell_area}\n")
+                f.write(f"  Normal threshold  : {normal_threshold_deg} deg\n")
             f.write(f"  Files processed   : {len(files_to_process)}\n")
             f.write(f"  Total batch time  : {batch_elapsed:.1f} s\n")
             f.write("=" * 72 + "\n\n")
@@ -157,6 +192,13 @@ def batch_process_directory(input_dir, radius=None, max_cell_area=None, normal_t
                 f.write(f"  Peak density (before) : {st['peak_density_before']:.6e} W/m²\n")
                 f.write(f"  Peak density (after)  : {st['peak_density_after']:.6e} W/m²\n")
                 f.write(f"  Cell area range       : [{st['min_area_m2']:.4e}, {st['max_area_m2']:.4e}] m²\n")
+                if "chi2_per_dof" in st:
+                    f.write(f"  Conservation error    : {st['conservation_error']:+.3e}\n")
+                    f.write(f"  chi2/dof              : {st['chi2_per_dof']:.3f}  (~1 = consistent with the statistics)\n")
+                    f.write(f"  Median bandwidth      : {st['median_bandwidth_m'] * 1e3:.2f} mm (hit cells)\n")
+                    f.write(f"  Median rel. sigma     : {st['median_rel_sigma'] * 100:.2f} % (hit cells)\n")
+                    f.write(f"  Dispersion factor     : {st['dispersion_factor']:.3f}  (1 = Poisson)\n")
+                    f.write(f"  Quantisation quality  : {st['quantisation_quality'] * 100:.1f} %\n")
                 f.write("\n")
 
         print(f"  Log written to: {log_path}")
@@ -226,7 +268,27 @@ if __name__ == "__main__":
         default=MAX_CELL_AREA,
         help=f"Only smooth cells with area below this threshold (m²). Defaults to {MAX_CELL_AREA}. Set to 0 to smooth all cells."
     )
+    parser.add_argument(
+        '-m', '--method',
+        choices=SMOOTHING_METHODS,
+        default="radius",
+        help="Smoothing method. Defaults to 'radius'."
+    )
+    parser.add_argument(
+        '--target-rel-error',
+        type=float,
+        default=DEFAULT_TARGET_REL_ERROR,
+        help=f"Physical method: ceiling on the 1-sigma statistical error per cell. Defaults to {DEFAULT_TARGET_REL_ERROR}."
+    )
+    parser.add_argument(
+        '--max-bandwidth',
+        type=float,
+        default=DEFAULT_MAX_BANDWIDTH_M,
+        help=f"Physical method: maximum smoothing length in metres. Defaults to {DEFAULT_MAX_BANDWIDTH_M}."
+    )
     args = parser.parse_args()
-    
+
     area_arg = args.max_cell_area if args.max_cell_area > 0 else None
-    batch_process_directory(args.input_dir, radius=args.radius, max_cell_area=area_arg)
+    batch_process_directory(args.input_dir, radius=args.radius, max_cell_area=area_arg,
+                            method=args.method, target_rel_error=args.target_rel_error,
+                            max_bandwidth_m=args.max_bandwidth)

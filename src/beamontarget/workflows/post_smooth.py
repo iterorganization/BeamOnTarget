@@ -96,6 +96,30 @@ def main():
             f"Defaults to {config.SMOOTHING_NORMAL_THRESHOLD_DEG}."
         ),
     )
+    parser.add_argument(
+        "-m", "--method",
+        choices=batch_smoother.SMOOTHING_METHODS,
+        default=config.SMOOTHING_METHOD,
+        help=f"Smoothing method.  Defaults to '{config.SMOOTHING_METHOD}'.",
+    )
+    parser.add_argument(
+        "--target-rel-error",
+        type=float,
+        default=config.SMOOTHING_TARGET_REL_ERROR,
+        help=(
+            "Physical method: ceiling on the 1-sigma statistical error per cell.\n"
+            f"Defaults to {config.SMOOTHING_TARGET_REL_ERROR}."
+        ),
+    )
+    parser.add_argument(
+        "--max-bandwidth",
+        type=float,
+        default=config.SMOOTHING_MAX_BANDWIDTH_M,
+        help=(
+            "Physical method: maximum smoothing length in metres.\n"
+            f"Defaults to {config.SMOOTHING_MAX_BANDWIDTH_M}."
+        ),
+    )
     args = parser.parse_args()
 
     input_dir = args.input_dir
@@ -126,9 +150,14 @@ def main():
         return
 
     print(f"\n=== Post-Smoothing Configuration ===")
-    print(f"  Smoothing radius : {radius} m")
-    print(f"  Max cell area    : {max_cell_area}")
-    print(f"  Normal threshold : {normal_threshold} deg")
+    print(f"  Method           : {args.method}")
+    if args.method == "physical":
+        print(f"  Target rel. error: {args.target_rel_error}")
+        print(f"  Max bandwidth    : {args.max_bandwidth} m")
+    else:
+        print(f"  Smoothing radius : {radius} m")
+        print(f"  Max cell area    : {max_cell_area}")
+        print(f"  Normal threshold : {normal_threshold} deg")
     print(f"  Directories      : {len(dirs_to_process)}")
     print(f"====================================\n")
 
@@ -140,6 +169,9 @@ def main():
                 radius=radius,
                 max_cell_area=max_cell_area,
                 normal_threshold_deg=normal_threshold,
+                method=args.method,
+                target_rel_error=args.target_rel_error,
+                max_bandwidth_m=args.max_bandwidth,
             )
         except Exception as e:
             print(f"  ERROR while processing '{result_dir}': {e}")

@@ -204,6 +204,9 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
                 radius=config.SMOOTHING_RADIUS,
                 max_cell_area=config.SMOOTHING_MAX_CELL_AREA,
                 normal_threshold_deg=config.SMOOTHING_NORMAL_THRESHOLD_DEG,
+                method=config.SMOOTHING_METHOD,
+                target_rel_error=config.SMOOTHING_TARGET_REL_ERROR,
+                max_bandwidth_m=config.SMOOTHING_MAX_BANDWIDTH_M,
             )
         except Exception as e:
             print(f"An error occurred during automatic batch smoothing: {e}")

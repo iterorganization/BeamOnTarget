@@ -97,6 +97,9 @@ def _build_dict():
         "SMOOTHING_RADIUS": SMOOTHING_RADIUS,
         "SMOOTHING_MAX_CELL_AREA": SMOOTHING_MAX_CELL_AREA,
         "SMOOTHING_NORMAL_THRESHOLD_DEG": SMOOTHING_NORMAL_THRESHOLD_DEG,
+        "SMOOTHING_METHOD": SMOOTHING_METHOD,
+        "SMOOTHING_TARGET_REL_ERROR": SMOOTHING_TARGET_REL_ERROR,
+        "SMOOTHING_MAX_BANDWIDTH_M": SMOOTHING_MAX_BANDWIDTH_M,
         "PARAVIEW_PATH": PARAVIEW_PATH,
     }
 
@@ -167,6 +170,12 @@ def _apply(d):
     g["SMOOTHING_RADIUS"]           = d.get("SMOOTHING_RADIUS", 0.02)
     g["SMOOTHING_MAX_CELL_AREA"]    = d.get("SMOOTHING_MAX_CELL_AREA", 4e-6)
     g["SMOOTHING_NORMAL_THRESHOLD_DEG"] = d.get("SMOOTHING_NORMAL_THRESHOLD_DEG", 7.0)
+    # "radius": area-weighted average over a ball (SMOOTHING_RADIUS ...).
+    # "physical": energy-conserving diffusion with error estimate, see
+    # io/physical_smooth.py (SMOOTHING_TARGET_REL_ERROR, SMOOTHING_MAX_BANDWIDTH_M).
+    g["SMOOTHING_METHOD"]           = d.get("SMOOTHING_METHOD", "radius")
+    g["SMOOTHING_TARGET_REL_ERROR"] = d.get("SMOOTHING_TARGET_REL_ERROR", 0.05)
+    g["SMOOTHING_MAX_BANDWIDTH_M"]  = d.get("SMOOTHING_MAX_BANDWIDTH_M", 0.04)
 
     g["PARAVIEW_PATH"]              = d.get("PARAVIEW_PATH", "paraview")
 

@@ -38,8 +38,9 @@ output files — all from a graphical interface or the command line.
   `GaussianTwissBeam`.
 - **Professional Output** — Saves results as ParaView-compatible `.vtp`
   files with cell data (Deposited Power, Power Density).
-- **Automated Post-Processing** — Optional smoothing algorithm for
-  clearer heat maps.
+- **Automated Post-Processing** — Optional smoothing for clearer heat
+  maps: a radius average, or an energy-conserving "physical" method that
+  also reports a per-cell uncertainty.
 - **VTP Data Extraction** — Extract cell data from `.vtp` files to CSV
   directly from the GUI.
 - **CSV Result Comparison** — Side-by-side bar-charts of peak power
@@ -63,7 +64,8 @@ output files — all from a graphical interface or the command line.
 | `src/beamontarget/geometry/geometry.py` | Loading, processing, caching, and grouping of `.stl` meshes. |
 | `src/beamontarget/particles/particles.py` | Particle source classes and `.bl` file loading. |
 | `src/beamontarget/io/output.py` | File output — `.vtp` saving and summary `.csv` reports. |
-| `src/beamontarget/io/smooth_results.py` | Core smoothing logic (library). |
+| `src/beamontarget/io/smooth_results.py` | Core smoothing logic (library) and the smoothing CLI. |
+| `src/beamontarget/io/physical_smooth.py` | Energy-conserving "physical" smoothing with error estimate. |
 | `src/beamontarget/io/batch_smoother.py` | Applies smoothing to result `.vtp` files in a directory. |
 | `src/beamontarget/workflows/post_smooth.py` | Additional post-processing / smoothing utilities. |
 | `src/beamontarget/io/generate_report.py` | Automated report generation from results. |
@@ -304,7 +306,27 @@ an empty folder and configure `EXTERNAL_FIELD` as usual.
 
 ```bash
 python -m beamontarget.io.batch_smoother -i OUTPUT/my_beam_run
+python -m beamontarget.io.batch_smoother -i OUTPUT/my_beam_run -m physical
 ```
+
+Two methods are available (`SMOOTHING_METHOD` in the config, or *Method* in
+the Output tab):
+
+- `radius` (default) — each cell gets `sum(P) / sum(A)` over the cells within
+  `SMOOTHING_RADIUS` whose normals are within `SMOOTHING_NORMAL_THRESHOLD_DEG`.
+  Only the density is changed; the total of `density × area` is not conserved.
+- `physical` — estimates the density by conservative diffusion along the
+  surface, so `sum(density × area)` equals the deposited power to solver
+  precision. The bandwidth adapts per cell: it is widened only where the
+  Monte Carlo counting error exceeds `SMOOTHING_TARGET_REL_ERROR` (default
+  0.05), up to `SMOOTHING_MAX_BANDWIDTH_M` (default 0.04 m). Besides the
+  smoothed `Power_Density_W_m2` and a consistent `Deposited_Power_W`, it writes
+  `Power_Density_sigma_stat_W_m2` (1σ counting error, by bootstrap),
+  `Power_Density_bias_W_m2` (smoothing error), `Power_Density_p95_W_m2`,
+  `Smoothing_N_eff` and `Smoothing_bandwidth_m`. `smooth_log.txt` reports the
+  conservation error and χ²/dof (≈ 1 means as much smoothing as the
+  statistics support). It is slower than the radius method (minutes for a
+  mesh with millions of cells) and needs triangle meshes.
 
 ### VTP Data Extraction (CLI)
 

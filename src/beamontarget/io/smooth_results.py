@@ -266,6 +266,21 @@ def main(argv=None):
         type=float,
         default=None,
         help="Angle threshold in degrees for surface normal filtering.")
+    parser.add_argument(
+        '-m', '--method',
+        choices=batch_smoother.SMOOTHING_METHODS,
+        default=None,
+        help="Override the smoothing method: 'radius' or 'physical'.")
+    parser.add_argument(
+        '--target-rel-error',
+        type=float,
+        default=None,
+        help="Physical method: override the ceiling on the 1-sigma statistical error.")
+    parser.add_argument(
+        '--max-bandwidth',
+        type=float,
+        default=None,
+        help="Physical method: override the maximum smoothing length in metres.")
 
     args = parser.parse_args(argv)
 
@@ -289,6 +304,11 @@ def main(argv=None):
 
     normal_threshold = args.normal_threshold if args.normal_threshold is not None else \
                        config.SMOOTHING_NORMAL_THRESHOLD_DEG
+    method = args.method or config.SMOOTHING_METHOD
+    target_rel_error = args.target_rel_error if args.target_rel_error is not None else \
+                       config.SMOOTHING_TARGET_REL_ERROR
+    max_bandwidth_m = args.max_bandwidth if args.max_bandwidth is not None else \
+                      config.SMOOTHING_MAX_BANDWIDTH_M
 
     output_root = config.DETAILED_OUTPUT_DIR
     if not os.path.isdir(output_root):
@@ -309,21 +329,28 @@ def main(argv=None):
         return
 
     print(f"\n=== Smoothing Configuration ===")
-    print(f"  Radius           : {radius} m")
-    print(f"  Max cell area    : {max_cell_area} m2")
-    print(f"  Normal Threshold : {normal_threshold} deg")  # Added feedback
+    print(f"  Method           : {method}")
+    if method == "physical":
+        print(f"  Target rel. error: {target_rel_error}")
+        print(f"  Max bandwidth    : {max_bandwidth_m} m")
+    else:
+        print(f"  Radius           : {radius} m")
+        print(f"  Max cell area    : {max_cell_area} m2")
+        print(f"  Normal Threshold : {normal_threshold} deg")
     print(f"  Directories      : {len(dirs_to_process)}")
     print(f"===============================")
 
     for idx, result_dir in enumerate(dirs_to_process, 1):
         print(f"\n[{idx}/{len(dirs_to_process)}] Processing: {result_dir}")
         try:
-            # --- 5. IMPORTANT: Pass normal_threshold here! ---
             batch_smoother.batch_process_directory(
                 result_dir,
                 radius=radius,
                 max_cell_area=max_cell_area,
-                normal_threshold_deg=normal_threshold) 
+                normal_threshold_deg=normal_threshold,
+                method=method,
+                target_rel_error=target_rel_error,
+                max_bandwidth_m=max_bandwidth_m)
         except Exception as e:
             print(f"  ERROR while smoothing '{result_dir}': {e}")
             continue
