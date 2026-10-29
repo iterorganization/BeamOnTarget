@@ -59,6 +59,8 @@ def trace_particle_batch_em_only(
     bvh_checkpoint_steps=None,
     bvh_hit_callback=None,
     perf_stats=None,
+    min_steps_per_gyro_orbit=None,
+    run_stats=None,
 ):
     """
     Trace particles using EM integration ONLY (no mesh checks).
@@ -70,6 +72,18 @@ def trace_particle_batch_em_only(
     distance. Segments for particles already handled by the callback are NOT returned;
     only surviving segments (last checkpoint interval) are returned for the final BVH
     pass in the caller.
+
+    Optional adaptive step (min_steps_per_gyro_orbit): if set, each particle's
+    time step is additionally capped so that one step rotates its velocity by
+    at most 360/min_steps_per_gyro_orbit degrees about the LOCAL magnetic
+    field, i.e. dt <= (2*pi/N) / omega_c with omega_c = |q/m| |B|.  The step
+    therefore shrinks below em_step_length_m only where the field is strong
+    enough that a full step would cover an appreciable fraction of a
+    gyro-orbit; weak-field regions keep the full step.  Smaller steps use up
+    em_max_steps sooner.
+
+    If *run_stats* is a dict, "active_at_end" is set to the ids of the
+    particles still in flight after the last step (em_max_steps ran out).
 
     Returns:
         trajectory_segments: structured array with fields:
@@ -85,6 +99,13 @@ def trace_particle_batch_em_only(
     """
     trace_started_at = time.perf_counter()
     rng = np.random.default_rng(seed)
+
+    # Largest rotation about B allowed per step [rad]; None disables the cap.
+    max_gyro_angle_per_step_rad = (
+        2.0 * np.pi / float(min_steps_per_gyro_orbit)
+        if min_steps_per_gyro_orbit is not None and min_steps_per_gyro_orbit > 0
+        else None
+    )
 
     if particle_batch["origins"].size == 0:
         return np.array([], dtype=SEGMENT_DTYPE)
@@ -187,9 +208,25 @@ def trace_particle_batch_em_only(
 
         e_field, b_field = field_provider.sample(p, particle_time[active_idx])
         q_over_m = (q_state * ELEMENTARY_CHARGE_C) / np.maximum(m, 1e-30)
+
+        if max_gyro_angle_per_step_rad is not None:
+            # Shrink dt where the local B would turn the velocity by more than
+            # the allowed angle in one step; neutrals and weak fields are
+            # unaffected (omega_c = 0 or dt_cyclotron > dt).
+            omega_c = np.abs(q_over_m) * np.sqrt(np.einsum('ij,ij->i', b_field, b_field))
+            # The same jitter as the spatial step, scaled into (0.82, 1] so the
+            # rotation per step never exceeds the limit; without it every capped
+            # step would be identical and could beat against the mesh.
+            dt_cyclotron = np.where(
+                omega_c > 0,
+                max_gyro_angle_per_step_rad * (jitter / 1.1) / np.maximum(omega_c, 1e-300),
+                np.inf)
+            dt = np.minimum(dt, dt_cyclotron)
+
         v_next = boris_push(v, q_over_m, dt, e_field, b_field)
 
-        # Boris conserves speed — seg_len = em_step_length_m; no second norm needed
+        # Boris conserves speed, so the step length is speed*dt: em_step_length_m
+        # (with jitter), or less where the gyro-orbit cap above shrank dt.
         p_next = p + v_next * dt[:, np.newaxis]
         if not np.all(valid):
             p_next[~valid] = p[~valid]  # zero-speed particles stay in place
@@ -282,6 +319,12 @@ def trace_particle_batch_em_only(
             if hit_pids:
                 for pid in hit_pids:
                     active[pid] = False
+
+    if run_stats is not None:
+        # Still flying when the step budget ran out.  Some of these hit
+        # geometry in the last checkpoint interval; the caller subtracts the
+        # hits of its final BVH pass.
+        run_stats["active_at_end"] = np.flatnonzero(active)
 
     # Assemble structured output array from per-field lists
     if not seg_pid:

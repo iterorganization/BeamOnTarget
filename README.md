@@ -304,6 +304,19 @@ evolution) are the point and targets are irrelevant. To study how a beam drifts
 and disperses in a field before adding any hardware, point `GEOMETRY_FOLDERS` at
 an empty folder and configure `EXTERNAL_FIELD` as usual.
 
+### Adaptive EM step in strong magnetic fields
+
+EM tracking uses a fixed step of `EM_STEP_LENGTH_M` (±10 % jitter). Where the
+magnetic field is strong, one step can cover a large part of a gyro-orbit
+(an 870 keV D⁺ in 2 T has a 9.5 cm Larmor radius, so a 5 cm step gives only
+~12 steps per orbit) and the trajectory becomes inaccurate. Set
+`EM_MIN_STEPS_PER_GYRO_ORBIT` (GUI: *Min steps per gyro-orbit*, e.g. 20) to
+cap each particle's step so it turns by at most 360°/N about the local
+field: `dt ≤ (2π/N) / (|q/m|·|B|)`. The step only shrinks where the field
+requires it; neutrals and weak-field regions keep the full step. 0 (default)
+turns it off. Shorter steps use up `EM_MAX_STEPS` sooner: the run reports how
+many particles were still in flight when the step budget ran out.
+
 ### Manual Smoothing
 
 ```bash

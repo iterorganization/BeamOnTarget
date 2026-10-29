@@ -162,6 +162,7 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
             save_impact_flags=save_impact_flags_per_mesh,
             max_impact_records=max_impact_records_per_mesh,
             em_bvh_checkpoint_distance_m=config.EM_BVH_CHECKPOINT_DISTANCE_M,
+            em_min_steps_per_gyro_orbit=config.EM_MIN_STEPS_PER_GYRO_ORBIT,
         )
     else:
         raise ValueError(

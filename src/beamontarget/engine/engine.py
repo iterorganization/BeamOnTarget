@@ -312,6 +312,7 @@ def run_simulation_em_track_then_bvh(
     save_impact_flags=None,
     max_impact_records=None,
     em_bvh_checkpoint_distance_m=None,
+    em_min_steps_per_gyro_orbit=None,
 ):
     """
     Two-phase EM particle tracking:
@@ -322,6 +323,10 @@ def run_simulation_em_track_then_bvh(
     If set, a BVH check is performed every time a particle has travelled that
     distance. Particles confirmed to have hit geometry are deactivated immediately
     and not traced further, reducing total computation for early-hitting particles.
+
+    Optional adaptive step (em_min_steps_per_gyro_orbit): the step is shortened
+    where the local B field would otherwise resolve a gyro-orbit in fewer than
+    that many steps (see trace_particle_batch_em_only).
     """
     num_objects = len(face_counts)
     if save_impact_flags is None:
@@ -337,6 +342,9 @@ def run_simulation_em_track_then_bvh(
     print(f"  - Using {n_jobs} threads (available cores: {available_cores}).")
     print(f"  - Target particle batch size: {int(particle_batch_size)}")
     print(f"  - Step length: {em_step_length_m:.3e} m, max steps: {int(em_max_steps)}")
+    if em_min_steps_per_gyro_orbit is not None and em_min_steps_per_gyro_orbit > 0:
+        print(f"  - Adaptive step: shorter than {em_step_length_m:.3e} m wherever the local B "
+              f"would resolve a gyro-orbit in fewer than {int(em_min_steps_per_gyro_orbit)} steps")
     if bounding_box_min_corner_m is not None and bounding_box_max_corner_m is not None:
         print(f"  - Bounding box min corner: {bounding_box_min_corner_m}")
         print(f"  - Bounding box max corner: {bounding_box_max_corner_m}")
@@ -413,6 +421,7 @@ def run_simulation_em_track_then_bvh(
             _merge_into_all(sparse_chunk, imp_chunk, species_chunk)
             return hit_pids
 
+        run_stats = {}
         trajectory_segments = trace_particle_batch_em_only(
             batch,
             field_provider,
@@ -427,14 +436,21 @@ def run_simulation_em_track_then_bvh(
             bvh_checkpoint_steps=bvh_checkpoint_steps,
             bvh_hit_callback=_bvh_checkpoint_callback if bvh_checkpoint_steps is not None else None,
             perf_stats=perf_stats if perf_enabled else None,
+            min_steps_per_gyro_orbit=em_min_steps_per_gyro_orbit,
+            run_stats=run_stats,
         )
 
         # Final BVH pass on the surviving segments (last checkpoint interval or all if no checkpoints)
         final_bvh_started_at = time.perf_counter()
-        final_sparse, final_impacts, _, final_species = intersect_trajectory_segments_bvh(
+        final_sparse, final_impacts, final_hit_pids, final_species = intersect_trajectory_segments_bvh(
             trajectory_segments, intersector, face_offsets, face_counts, deposition_model,
             save_impact_flags=save_impact_flags,
         )
+        # Particles that ran out of steps without hitting anything are lost.
+        still_flying = run_stats.get("active_at_end")
+        n_out_of_steps = (len(set(still_flying.tolist()) - set(final_hit_pids))
+                          if still_flying is not None else 0)
+        perf_stats["out_of_steps"] = n_out_of_steps
         if perf_enabled:
             perf_stats["final_bvh_s"] += time.perf_counter() - final_bvh_started_at
         _merge_into_all(final_sparse, final_impacts, final_species)
@@ -481,6 +497,8 @@ def run_simulation_em_track_then_bvh(
         "final_bvh_s": 0.0,
     }
 
+    total_out_of_steps = 0
+
     # Cap concurrency: EM workers are memory-heavy (trajectory storage)
     effective_workers = min(n_jobs, max(total_batches, 1), 4)
     # Feed batches lazily: only keep 'effective_workers' batches in flight at once
@@ -519,6 +537,7 @@ def run_simulation_em_track_then_bvh(
                                 continue
                             np.add.at(per_species_power[cs][obj_idx], idxs, vals)
                     _merge_impact_records(impact_data, chunk_impacts, save_impact_flags, max_impact_records)
+                    total_out_of_steps += chunk_perf.get("out_of_steps", 0)
                     if perf_enabled:
                         for key in perf_totals:
                             perf_totals[key] += chunk_perf.get(key, 0.0)
@@ -534,6 +553,11 @@ def run_simulation_em_track_then_bvh(
 
     total_deposited = sum(arr.sum() for arr in final_deposited_power)
     print(f"Total power deposited: {total_deposited:.2f} W")
+    if total_out_of_steps:
+        print(f"  WARNING: {total_out_of_steps:,} of {total_particles:,} particles were still in "
+              f"flight when EM_MAX_STEPS ({int(em_max_steps)}) ran out and deposited nothing. "
+              "Increase EM_MAX_STEPS (the adaptive step uses more steps in strong B), "
+              "or set EM_MAX_DISTANCE_M / the bounding box to stop them on purpose.")
     if per_species_power:
         for cs in sorted(per_species_power.keys()):
             sp_total = sum(arr.sum() for arr in per_species_power[cs])

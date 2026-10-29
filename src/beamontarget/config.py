@@ -79,6 +79,7 @@ def _build_dict():
         "EM_BOUNDING_BOX_MIN_CORNER_M": EM_BOUNDING_BOX_MIN_CORNER_M,
         "EM_BOUNDING_BOX_MAX_CORNER_M": EM_BOUNDING_BOX_MAX_CORNER_M,
         "EM_BVH_CHECKPOINT_DISTANCE_M": EM_BVH_CHECKPOINT_DISTANCE_M,
+        "EM_MIN_STEPS_PER_GYRO_ORBIT": EM_MIN_STEPS_PER_GYRO_ORBIT,
         "V_RID_V": V_RID_V,
         "DENSITY_DIRECTION": DENSITY_DIRECTION,
         "EXTERNAL_FIELD": EXTERNAL_FIELD,
@@ -136,6 +137,9 @@ def _apply(d):
     g["EM_BOUNDING_BOX_MIN_CORNER_M"] = d.get("EM_BOUNDING_BOX_MIN_CORNER_M", None)
     g["EM_BOUNDING_BOX_MAX_CORNER_M"] = d.get("EM_BOUNDING_BOX_MAX_CORNER_M", None)
     g["EM_BVH_CHECKPOINT_DISTANCE_M"] = d.get("EM_BVH_CHECKPOINT_DISTANCE_M", 1.0)
+    # Adaptive step: shorten EM_STEP_LENGTH_M where the local B would resolve a
+    # gyro-orbit in fewer than this many steps (0 = off, fixed step length).
+    g["EM_MIN_STEPS_PER_GYRO_ORBIT"] = d.get("EM_MIN_STEPS_PER_GYRO_ORBIT", 0)
     g["V_RID_V"]                    = d.get("V_RID_V", 20e3)
     g["DENSITY_DIRECTION"]          = d.get(
         "DENSITY_DIRECTION",

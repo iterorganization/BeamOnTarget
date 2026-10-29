@@ -606,6 +606,16 @@ class SimGUI(tk.Tk):
         ttk.Entry(em_card, textvariable=self.var_em_checkpoint, width=12).grid(
             row=r, column=3, sticky="w", padx=(8, 0))
 
+        r += 1
+        ttk.Label(em_card, text="Min steps per gyro-orbit:", style="Card.TLabel").grid(
+            row=r, column=0, sticky="w", pady=4)
+        self.var_em_min_gyro_steps = tk.IntVar(value=self.cfg.get("EM_MIN_STEPS_PER_GYRO_ORBIT", 0))
+        ttk.Entry(em_card, textvariable=self.var_em_min_gyro_steps, width=12).grid(
+            row=r, column=1, sticky="w", padx=(8, 0))
+        ttk.Label(em_card, text="shortens the step in strong B fields (0 = off; e.g. 20)",
+                  style="Card.TLabel", foreground=self._colours["dim"]).grid(
+            row=r, column=2, columnspan=2, sticky="w", padx=(24, 0))
+
         em_card.columnconfigure(1, weight=1)
         em_card.columnconfigure(3, weight=1)
 
@@ -928,6 +938,7 @@ class SimGUI(tk.Tk):
         v = self.var_em_min_energy.get().strip()
         d["EM_MIN_ENERGY_EV"] = float(v) if v else None
         d["EM_BVH_CHECKPOINT_DISTANCE_M"] = self.var_em_checkpoint.get()
+        d["EM_MIN_STEPS_PER_GYRO_ORBIT"] = self.var_em_min_gyro_steps.get()
         d["EM_BOUNDING_BOX_MIN_CORNER_M"] = self._parse_vec3(self.var_bbox_min.get())
         d["EM_BOUNDING_BOX_MAX_CORNER_M"] = self._parse_vec3(self.var_bbox_max.get())
         # External field - delegate to FieldsTab
@@ -1024,6 +1035,7 @@ class SimGUI(tk.Tk):
         v = c.get("EM_MIN_ENERGY_EV")
         self.var_em_min_energy.set(str(v) if v is not None else "")
         self.var_em_checkpoint.set(c.get("EM_BVH_CHECKPOINT_DISTANCE_M", 1.0))
+        self.var_em_min_gyro_steps.set(c.get("EM_MIN_STEPS_PER_GYRO_ORBIT", 0))
         bbox_min = c.get("EM_BOUNDING_BOX_MIN_CORNER_M") or [0.0, -0.5, -1.3]
         self.var_bbox_min.set(f"{bbox_min[0]}, {bbox_min[1]}, {bbox_min[2]}")
         bbox_max = c.get("EM_BOUNDING_BOX_MAX_CORNER_M") or [13.0, 0.5, 0.8]
