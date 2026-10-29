@@ -269,10 +269,13 @@ class ReactionsTab(ttk.Frame):
         """Write REACTION_MODEL and DENSITY_DIRECTION keys into *d*."""
         if is_em:
             dd_vec = parse_vec3(self.var_density_dir.get())
+            # The engine uses the profile whenever a file is set, so only
+            # store it when the profile source is selected.
+            use_profile = self.var_density_mode.get() != "Uniform density"
             rm_dict = {
                 "type": "beam_gas_cross_sections",
                 "background_density_m3": self.var_bg_density.get(),
-                "density_profile_file": self.var_density_file.get(),
+                "density_profile_file": self.var_density_file.get() if use_profile else "",
                 "density_profile_scale": self.var_density_profile_scale.get(),
                 "density_profile_direction": dd_vec,
             }
@@ -295,6 +298,9 @@ class ReactionsTab(ttk.Frame):
         rm = c.get("REACTION_MODEL", {})
         self.var_bg_density.set(rm.get("background_density_m3", 0.0))
         self.var_density_file.set(rm.get("density_profile_file", ""))
+        self.var_density_mode.set(
+            "Density profile file (.dens)" if rm.get("density_profile_file")
+            else "Uniform density")
         self.var_density_profile_scale.set(rm.get("density_profile_scale", 1.0))
         dd = rm.get("density_profile_direction",
                      c.get("DENSITY_DIRECTION", [1.0, 0.0, 0.0]))

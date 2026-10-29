@@ -23,7 +23,7 @@ import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
-from beamontarget.gui.gui_widgets import make_card, resolve_path, symbol_text
+from beamontarget.gui.gui_widgets import make_card, resolve_path
 
 # ---------------------------------------------------------------------------
 #  ResultsTab
@@ -91,9 +91,9 @@ class ResultsTab(ttk.Frame):
 
         btn_frm = ttk.Frame(vis_card, style="Card.TFrame")
         btn_frm.pack(fill="x", pady=(8, 0))
-        ttk.Button(btn_frm, text=f"{symbol_text('👁', '')} Results (Open3D)", style="Secondary.TButton",
+        ttk.Button(btn_frm, text="Results (Open3D)", style="Secondary.TButton",
                     command=self._view_results_o3d_fn).pack(side="left", padx=(0, 8))
-        ttk.Button(btn_frm, text=f"{symbol_text('🔍', '')} Results (ParaView)", style="Secondary.TButton",
+        ttk.Button(btn_frm, text="Results (ParaView)", style="Secondary.TButton",
                     command=self._view_results_fn).pack(side="left")
 
         # --- Summary Reports card ---
@@ -106,9 +106,9 @@ class ResultsTab(ttk.Frame):
         ttk.Checkbutton(sel_frm, text="Use smoothed if available",
                          variable=self.var_csv_use_smoothed,
                          style="Card.TCheckbutton").pack(side="left", padx=(0, 12))
-        ttk.Button(sel_frm, text=f"{symbol_text('↻', '')} Refresh", style="Secondary.TButton",
+        ttk.Button(sel_frm, text="Refresh", style="Secondary.TButton",
                     command=self.refresh_csv_result_sets).pack(side="left", padx=(0, 4))
-        ttk.Button(sel_frm, text=f"{symbol_text('📊', '')} Load Selected", style="Secondary.TButton",
+        ttk.Button(sel_frm, text="Load Selected", style="Secondary.TButton",
                     command=self._load_summary_csv).pack(side="left", padx=4)
 
         # Simulation selector
@@ -199,7 +199,7 @@ class ResultsTab(ttk.Frame):
         ttk.Button(btn_row_comp, text="None", style="Secondary.TButton",
                     command=self._chart_comp_select_none).pack(
                         side="left", padx=2)
-        ttk.Button(btn_row_comp, text=f"{symbol_text('↻', '')} Plot", style="Secondary.TButton",
+        ttk.Button(btn_row_comp, text="Plot", style="Secondary.TButton",
                     command=self.update_csv_bar_plots).pack(
                         side="left", padx=2)
 
@@ -245,10 +245,14 @@ class ResultsTab(ttk.Frame):
         plot_frm = ttk.Frame(chart_pw, style="Card.TFrame")
         chart_pw.add(plot_frm, weight=1)
 
+        # Constrained layout (unlike tight_layout) reserves room for the
+        # figure-level legend placed above the charts.
         self._csv_fig = Figure(figsize=(5, 6), dpi=100,
-                                facecolor="white", tight_layout=True)
+                                facecolor="white", layout="constrained")
         self._csv_ax_peak = self._csv_fig.add_subplot(2, 1, 1)
-        self._csv_ax_power = self._csv_fig.add_subplot(2, 1, 2)
+        self._csv_ax_power = self._csv_fig.add_subplot(
+            2, 1, 2, sharex=self._csv_ax_peak)
+        self._csv_legend = None
         self._csv_canvas_mpl = FigureCanvasTkAgg(self._csv_fig, plot_frm)
         self._csv_canvas_mpl.get_tk_widget().pack(fill="both", expand=True)
 
@@ -260,7 +264,6 @@ class ResultsTab(ttk.Frame):
 
         self._csv_ax_peak.set_title("Peak Heat Load [W/m²]", fontsize=10)
         self._csv_ax_power.set_title("Total Power [W]", fontsize=10)
-        self._csv_fig.tight_layout()
         self._csv_canvas_mpl.draw()
 
         self._csv_plot_data = {}
@@ -393,7 +396,7 @@ class ResultsTab(ttk.Frame):
 
         hdr = ttk.Frame(self._chart_comp_inner, style="Card.TFrame")
         hdr.pack(fill="x", padx=2, pady=(0, 2))
-        ttk.Label(hdr, text=symbol_text("✓", "Y"), style="Card.TLabel", width=2).pack(side="left")
+        ttk.Label(hdr, text="", style="Card.TLabel", width=2).pack(side="left")
         ttk.Label(hdr, text="Label", style="Card.TLabel", width=14).pack(
             side="left", padx=(2, 0))
         ttk.Label(hdr, text="Mult", style="Card.TLabel", width=5).pack(
@@ -617,6 +620,9 @@ class ResultsTab(ttk.Frame):
         ax_power = self._csv_ax_power
         ax_peak.clear()
         ax_power.clear()
+        if self._csv_legend is not None:
+            self._csv_legend.remove()
+            self._csv_legend = None
         self._csv_bar_hover_targets = {"peak": [], "power": []}
         self._clear_csv_hover()
 
@@ -624,7 +630,6 @@ class ResultsTab(ttk.Frame):
         if not data:
             ax_peak.set_title("Peak Heat Load [W/m²]", fontsize=10)
             ax_power.set_title("Total Power [W]", fontsize=10)
-            self._csv_fig.tight_layout()
             self._csv_canvas_mpl.draw()
             return
 
@@ -656,12 +661,11 @@ class ResultsTab(ttk.Frame):
         n_sims = len(sim_names)
 
         if n_objects == 0:
-            self._csv_fig.tight_layout()
             self._csv_canvas_mpl.draw()
             return
 
-        cmap = plt.get_cmap("tab10")
-        colours = [cmap(i % 10) for i in range(n_sims)]
+        cmap = plt.get_cmap("tab10" if n_sims <= 10 else "tab20")
+        colours = [cmap(i % cmap.N) for i in range(n_sims)]
 
         obj_mult = {}
         for obj in all_objects:
@@ -677,6 +681,9 @@ class ResultsTab(ttk.Frame):
         x = np.arange(n_objects)
         total_bar_width = 0.8
         bar_width = total_bar_width / max(n_sims, 1)
+        # A white edge separates wide bars; on thin bars it covers most of the
+        # fill and makes them look washed out.
+        bar_edge = "white" if n_objects * n_sims <= 80 else "none"
 
         for si, sim in enumerate(sim_names):
             lookup = {e["name"]: e for e in data[sim]}
@@ -701,10 +708,10 @@ class ResultsTab(ttk.Frame):
             offset = (si - (n_sims - 1) / 2) * bar_width
             label = sim if len(sim) <= 30 else sim[:27] + "…"
             peak_bars = ax_peak.bar(x + offset, peaks, bar_width * 0.9,
-                                    label=label, color=colours[si], edgecolor="white",
+                                    label=label, color=colours[si], edgecolor=bar_edge,
                                     linewidth=0.5)
             power_bars = ax_power.bar(x + offset, powers, bar_width * 0.9,
-                                       label=label, color=colours[si], edgecolor="white",
+                                       label=label, color=colours[si], edgecolor=bar_edge,
                                        linewidth=0.5)
 
             for obj, val, patch in zip(all_objects, peaks, peak_bars.patches):
@@ -724,15 +731,27 @@ class ResultsTab(ttk.Frame):
             else:
                 display_labels.append(obj)
 
+        # The x axis is shared, so component names are drawn only under the
+        # bottom chart. Many components get vertical, smaller labels so that
+        # neighbouring names do not overlap.
+        if n_objects <= 15:
+            rotation, ha, label_fs = 45, "right", 8
+        else:
+            rotation, ha = 90, "center"
+            label_fs = 7 if n_objects <= 40 else 6
+        ax_power.set_xticks(x)
+        ax_power.set_xticklabels(display_labels, rotation=rotation, ha=ha,
+                                 rotation_mode="anchor" if rotation == 45 else "default",
+                                 fontsize=label_fs)
+        ax_power.set_xlim(-0.5, n_objects - 0.5)
+        ax_peak.tick_params(axis="x", labelbottom=False)
+
         for ax, title, unit, log_var in [
             (ax_peak, "Peak Heat Load", "W/m²", self.var_chart_log_peak),
             (ax_power, "Total Deposited Power", "W", self.var_chart_log_power),
         ]:
             ax.set_title(f"{title}{species_label} [{unit}]",
                          fontsize=10, fontweight="bold")
-            ax.set_xticks(x)
-            ax.set_xticklabels(display_labels, rotation=45, ha="right",
-                               fontsize=8)
             ax.set_ylabel(unit, fontsize=9)
             if log_var.get():
                 ax.set_yscale("log")
@@ -741,9 +760,14 @@ class ResultsTab(ttk.Frame):
                 ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
             ax.grid(axis="y", alpha=0.3, linewidth=0.5)
             ax.set_axisbelow(True)
-            if n_sims > 1:
-                ax.legend(fontsize=7, loc="upper right", framealpha=0.8)
 
-        self._csv_fig.tight_layout()
+        # One shared legend above both charts instead of one inside each,
+        # where it covered the bars.
+        if n_sims > 1:
+            handles, labels = ax_power.get_legend_handles_labels()
+            self._csv_legend = self._csv_fig.legend(
+                handles, labels, loc="outside upper center",
+                ncol=min(n_sims, 4), fontsize=7, frameon=False)
+
         self._csv_canvas_mpl.draw()
 

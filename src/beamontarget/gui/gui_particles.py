@@ -13,7 +13,6 @@ from beamontarget.gui.gui_widgets import (
     _SCRIPT_DIR,
     resolve_path as _resolve_path,
     browse_directory,
-    symbol_text,
 )
 
 
@@ -83,9 +82,9 @@ class ParticlesTab(ttk.Frame):
 
         bl_btn_frm = ttk.Frame(bl_card, style="Card.TFrame")
         bl_btn_frm.pack(fill="x")
-        ttk.Button(bl_btn_frm, text=f"{symbol_text('↻', '')} Refresh", style="Secondary.TButton",
+        ttk.Button(bl_btn_frm, text="Refresh", style="Secondary.TButton",
                     command=self._refresh_bl_list).pack(side="left")
-        ttk.Button(bl_btn_frm, text=f"{symbol_text('👁', '')} View Sources (Open3D)",
+        ttk.Button(bl_btn_frm, text="View Sources (Open3D)",
                     style="Secondary.TButton",
                     command=self._view_sources_o3d).pack(side="right")
 

@@ -305,7 +305,7 @@ class _EmbeddedViewer:
         # Placeholder text
         self._canvas.create_text(
             self._RENDER_W // 2, self._RENDER_H // 2,
-            text="Click  ▶ View  to render",
+            text="Click View to render",
             fill="#666", font=("Segoe UI", 12))
 
     # ------ public API ------
@@ -920,7 +920,7 @@ def _pick_items_dialog(parent, geometry_folders, results_dir,
                     pass
             dlg.destroy()
 
-        view_btn = ttk.Button(btn_frm, text="▶ View", command=_view)
+        view_btn = ttk.Button(btn_frm, text="View", command=_view)
         view_btn.pack(side="right", padx=2)
         ttk.Button(btn_frm, text="Close", command=_close).pack(side="right", padx=2)
 
@@ -1387,7 +1387,7 @@ def _pick_sources_dialog(parent, script_dir, source_dir, geometry_folders):
                 pass
         dlg.destroy()
 
-    view_btn = ttk.Button(btn_frm, text="▶ View", command=_view)
+    view_btn = ttk.Button(btn_frm, text="View", command=_view)
     view_btn.pack(side="right", padx=2)
     ttk.Button(btn_frm, text="Close", command=_close).pack(
         side="right", padx=2)
@@ -1517,7 +1517,7 @@ class _MeshCache:
 
 def _status_msg(parent, msg):
     if hasattr(parent, "_log"):
-        parent._log(f"🔍 {msg}\n")
+        parent._log(f"{msg}\n")
 
 
 def view_geometry(parent, script_dir, geometry_folders, source_dir=None):

@@ -5,7 +5,9 @@
 """Geometry tab — editable folder table with viewer buttons and 2-D bounding-box plot."""
 import glob
 import os
+import re
 import struct
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -14,6 +16,7 @@ import matplotlib
 matplotlib.use("Agg")
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
 
 from beamontarget.gui.gui_widgets import (
@@ -21,20 +24,77 @@ from beamontarget.gui.gui_widgets import (
     get_project_folder as _get_project_folder,
     to_relative_path as _to_relative_path,
     resolve_path as _resolve_path,
-    symbol_text,
 )
+
+
+# Per-file STL bounding boxes, unscaled: {(path, size, mtime_ns): (min, max)}.
+# Shared across tabs and config loads; entries are invalidated by size/mtime.
+_STL_BBOX_CACHE = {}
+
+_STL_CHUNK_TRIANGLES = 2_000_000
+_STL_DTYPE = np.dtype([
+    ("normal", "<f4", (3,)),
+    ("vertices", "<f4", (3, 3)),
+    ("attr", "<u2"),
+])
+_ASCII_VERTEX_RE = re.compile(
+    rb"vertex\s+(\S+)\s+(\S+)\s+(\S+)")
+
+
+def _read_stl_bbox(filepath, file_size):
+    """Read the unscaled (min_xyz, max_xyz) of a binary or ASCII STL file."""
+    with open(filepath, "rb") as fh:
+        fh.seek(80)
+        n_tri_bytes = fh.read(4)
+    if len(n_tri_bytes) < 4:
+        return None
+    n_tri = struct.unpack("<I", n_tri_bytes)[0]
+    if file_size == 84 + n_tri * 50 and n_tri > 0:
+        # Binary STL: memory-map and reduce in chunks, so a 300 MB file is
+        # not copied into memory in one piece.
+        data = np.memmap(filepath, dtype=_STL_DTYPE, mode="r", offset=84, shape=(n_tri,))
+        lo = np.full(3, np.inf)
+        hi = np.full(3, -np.inf)
+        for start in range(0, n_tri, _STL_CHUNK_TRIANGLES):
+            verts = data["vertices"][start:start + _STL_CHUNK_TRIANGLES].reshape(-1, 3)
+            lo = np.minimum(lo, verts.min(axis=0))
+            hi = np.maximum(hi, verts.max(axis=0))
+        del data
+        return lo, hi
+
+    # ASCII STL
+    with open(filepath, "rb") as fh:
+        matches = _ASCII_VERTEX_RE.findall(fh.read())
+    if not matches:
+        return None
+    try:
+        arr = np.array(matches, dtype=np.float64)
+    except ValueError:
+        return None
+    return arr.min(axis=0), arr.max(axis=0)
 
 
 class GeometryTab(ttk.Frame):
     """Treeview-based geometry folder manager."""
 
     def __init__(self, parent, cfg, colours, *,
-                 view_geometry_fn, view_geometry_o3d_fn):
+                 view_geometry_fn, view_geometry_o3d_fn,
+                 get_em_bbox=None, is_em_mode=None):
         super().__init__(parent)
         self.cfg = cfg
         self._colours = colours
         self._view_geometry = view_geometry_fn
         self._view_geometry_o3d = view_geometry_o3d_fn
+        # get_em_bbox() -> (min_xyz, max_xyz), or None if the entries are invalid.
+        self._get_em_bbox = get_em_bbox or (lambda: None)
+        self._is_em_mode = is_em_mode or (lambda: False)
+        # {folder: (min_xyz, max_xyz)} once all STL files have been read;
+        # None while unknown. Projection, toggle and box edits redraw from it.
+        self._folder_bbox_cache = None
+        self._loading = False
+        self._load_generation = 0
+        self._plot_drawn = False
+        self._redraw_job = None
         self._build()
 
     # ------------------------------------------------------------------
@@ -70,15 +130,15 @@ class GeometryTab(ttk.Frame):
         # Buttons
         btn_frm = ttk.Frame(card, style="Card.TFrame")
         btn_frm.pack(fill="x", pady=(10, 0))
-        ttk.Button(btn_frm, text=f"{symbol_text('+', '')} Add Folder...", style="Secondary.TButton",
+        ttk.Button(btn_frm, text="Add Folder...", style="Secondary.TButton",
                     command=self._add_geo_folder).pack(side="left", padx=(0, 4))
-        ttk.Button(btn_frm, text=f"{symbol_text('✎', '')} Edit Selected...", style="Secondary.TButton",
+        ttk.Button(btn_frm, text="Edit Selected...", style="Secondary.TButton",
                     command=self._edit_geo_folder).pack(side="left", padx=4)
-        ttk.Button(btn_frm, text=f"{symbol_text('✕', '')} Remove", style="Secondary.TButton",
+        ttk.Button(btn_frm, text="Remove", style="Secondary.TButton",
                     command=self._remove_geo_folder).pack(side="left", padx=4)
-        ttk.Button(btn_frm, text=f"{symbol_text('🔍', '')} ParaView", style="Secondary.TButton",
+        ttk.Button(btn_frm, text="ParaView", style="Secondary.TButton",
                     command=self._view_geometry).pack(side="right", padx=(4, 0))
-        ttk.Button(btn_frm, text=f"{symbol_text('🔷', '')} Open3D", style="Secondary.TButton",
+        ttk.Button(btn_frm, text="Open3D", style="Secondary.TButton",
                     command=self._view_geometry_o3d).pack(side="right", padx=4)
 
         # --- 2-D Bounding-box plot ---
@@ -94,8 +154,29 @@ class GeometryTab(ttk.Frame):
                                    state="readonly", width=8)
         proj_combo.pack(side="left", padx=(6, 12))
 
-        ttk.Button(ctrl_frm, text=f"{symbol_text('↻', '')} Refresh Plot", style="Secondary.TButton",
-                    command=self._update_plot).pack(side="left")
+        self._refresh_btn = ttk.Button(ctrl_frm, text="Refresh Plot",
+                                       style="Secondary.TButton",
+                                       command=self._refresh_plot)
+        self._refresh_btn.pack(side="left")
+        proj_combo.bind("<<ComboboxSelected>>", lambda e: self._update_plot())
+
+        self._var_show_em_box = tk.BooleanVar(value=True)
+        ttk.Checkbutton(ctrl_frm, text="Show EM bounding box",
+                        variable=self._var_show_em_box,
+                        style="Card.TCheckbutton",
+                        command=self._update_plot).pack(side="left", padx=(12, 0))
+
+        self._var_plot_status = tk.StringVar(value="")
+        ttk.Label(ctrl_frm, textvariable=self._var_plot_status,
+                  style="Card.TLabel", foreground="#64748b").pack(
+                      side="left", padx=(12, 0))
+
+        self._var_bbox_warning = tk.StringVar(value="")
+        self._bbox_warning_lbl = ttk.Label(
+            plot_card, textvariable=self._var_bbox_warning,
+            style="Card.TLabel", foreground="#b91c1c",
+            justify="left", wraplength=900)
+        self._bbox_warning_lbl.pack(side="bottom", anchor="w", pady=(6, 0))
 
         self._fig = Figure(figsize=(6, 3.2), dpi=100)
         self._fig.patch.set_facecolor("#ffffff")
@@ -107,14 +188,17 @@ class GeometryTab(ttk.Frame):
     #  Treeview helpers
     # ------------------------------------------------------------------
     def _populate_geo_tree(self):
+        # Folders may have changed; re-read the STL files on the next redraw.
+        self._folder_bbox_cache = None
+        self.schedule_bbox_redraw()
         for item in self.geo_tree.get_children():
             self.geo_tree.delete(item)
         for folder, s in self.cfg.get("GEOMETRY_FOLDERS", {}).items():
             self.geo_tree.insert("", "end", values=(
                 folder, s.get("scale", 1), s.get("target_length", 1.0),
-                symbol_text("✓", "Y") if s.get("save_details") else "",
-                symbol_text("✓", "Y") if s.get("is_diagnostic") else "",
-                symbol_text("✓", "Y") if s.get("save_impact_data") else "",
+                "Yes" if s.get("save_details") else "",
+                "Yes" if s.get("is_diagnostic") else "",
+                "Yes" if s.get("save_impact_data") else "",
                 s.get("max_impact_records") if s.get("max_impact_records") is not None else "—"))
 
     def _add_geo_folder(self):
@@ -243,61 +327,55 @@ class GeometryTab(ttk.Frame):
 
     @staticmethod
     def _stl_bbox(filepath, scale=1.0):
-        """Return (min_xyz, max_xyz) arrays for a binary or ASCII STL file."""
-        with open(filepath, "rb") as fh:
-            header = fh.read(80)
-            n_tri_bytes = fh.read(4)
-            if len(n_tri_bytes) < 4:
-                return None
-            n_tri = struct.unpack("<I", n_tri_bytes)[0]
-            expected = 80 + 4 + n_tri * 50
-            fh.seek(0, 2)
-            actual = fh.tell()
-            if actual == expected and n_tri > 0:
-                # Binary STL — fast numpy read
-                fh.seek(84)
-                dtype = np.dtype([
-                    ("normal", "<f4", (3,)),
-                    ("vertices", "<f4", (3, 3)),
-                    ("attr", "<u2"),
-                ])
-                data = np.frombuffer(fh.read(n_tri * 50), dtype=dtype)
-                verts = data["vertices"].reshape(-1, 3) * scale
-                return verts.min(axis=0), verts.max(axis=0)
+        """Return (min_xyz, max_xyz) arrays for a binary or ASCII STL file.
 
-        # Fallback: ASCII STL
-        verts = []
-        with open(filepath, "r", errors="replace") as fh:
-            for line in fh:
-                parts = line.strip().split()
-                if len(parts) == 4 and parts[0] == "vertex":
-                    try:
-                        verts.append([float(parts[1]), float(parts[2]), float(parts[3])])
-                    except ValueError:
-                        pass
-        if not verts:
+        Results are cached per file (keyed by path, size and modification
+        time), so redrawing only re-reads files that changed.
+        """
+        try:
+            st = os.stat(filepath)
+        except OSError:
             return None
-        arr = np.array(verts) * scale
-        return arr.min(axis=0), arr.max(axis=0)
+        key = (os.path.normcase(os.path.abspath(filepath)), st.st_size, st.st_mtime_ns)
+        bb = _STL_BBOX_CACHE.get(key)
+        if bb is None:
+            bb = _read_stl_bbox(filepath, st.st_size)
+            if bb is None:
+                return None
+            _STL_BBOX_CACHE[key] = bb
+        lo, hi = bb[0] * scale, bb[1] * scale
+        # A negative scale mirrors the part, swapping min and max.
+        return np.minimum(lo, hi), np.maximum(lo, hi)
 
-    def _compute_folder_bboxes(self):
-        """Return {folder_name: (min_xyz, max_xyz)} for every configured folder."""
-        result = {}
+    def _folder_stl_files(self):
+        """Return [(folder, scale, [stl paths])] for every configured folder."""
+        jobs = []
         for folder, settings in self.cfg.get("GEOMETRY_FOLDERS", {}).items():
             folder_abs = _resolve_path(folder) if not os.path.isabs(folder) else folder
             if not os.path.isdir(folder_abs):
                 continue
-            scale = settings.get("scale", 1.0)
-            stl_files = sorted(
+            # dict.fromkeys de-duplicates on case-insensitive file systems.
+            stl_files = sorted(dict.fromkeys(
                 glob.glob(os.path.join(folder_abs, "*.stl"))
-                + glob.glob(os.path.join(folder_abs, "*.STL"))
-            )
-            if not stl_files:
-                continue
+                + glob.glob(os.path.join(folder_abs, "*.STL"))))
+            if stl_files:
+                jobs.append((folder, settings.get("scale", 1.0), stl_files))
+        return jobs
+
+    @classmethod
+    def _compute_folder_bboxes(cls, jobs, progress_fn=None):
+        """Return {folder: (min_xyz, max_xyz)} for the given folder jobs."""
+        result = {}
+        done = 0
+        n_files = sum(len(files) for _, _, files in jobs)
+        for folder, scale, stl_files in jobs:
             g_min = np.full(3, np.inf)
             g_max = np.full(3, -np.inf)
             for stl in stl_files:
-                bb = self._stl_bbox(stl, scale)
+                bb = cls._stl_bbox(stl, scale)
+                done += 1
+                if progress_fn is not None:
+                    progress_fn(done, n_files)
                 if bb is None:
                     continue
                 g_min = np.minimum(g_min, bb[0])
@@ -306,10 +384,93 @@ class GeometryTab(ttk.Frame):
                 result[folder] = (g_min, g_max)
         return result
 
-    def _update_plot(self):
-        """Redraw the 2-D bounding-box overview."""
+    def _refresh_plot(self):
+        """Re-check the STL files (re-reading only changed ones), then redraw."""
+        self._folder_bbox_cache = None
+        self._update_plot()
+
+    def _start_loading(self):
+        """Read the STL bounding boxes in a background thread.
+
+        Reading large geometries (GBs of STL) takes many seconds; doing it on
+        the UI thread froze the window. Nothing is drawn until all folders
+        are known, so the plot never shows a partial picture.
+        """
+        self._load_generation += 1
+        gen = self._load_generation
+        self._loading = True
+        jobs = self._folder_stl_files()
+        self._refresh_btn.configure(state="disabled")
+        self._var_plot_status.set("Reading geometry...")
+
         ax = self._ax
         ax.clear()
+        ax.set_axis_off()
+        ax.text(0.5, 0.5, "Reading geometry files...", ha="center", va="center",
+                transform=ax.transAxes, fontsize=10, color="#64748b")
+        self._canvas.draw_idle()
+
+        # The worker never touches Tk; it only fills *state*, which the UI
+        # thread polls.
+        state = {"done": 0, "total": 0, "result": None}
+
+        def _progress(done, total):
+            state["done"], state["total"] = done, total
+
+        def _worker():
+            try:
+                bboxes = self._compute_folder_bboxes(jobs, _progress)
+                error = None
+            except Exception as e:  # keep the GUI usable if a file is unreadable
+                bboxes, error = {}, e
+            state["result"] = (bboxes, error)
+
+        def _poll():
+            if gen != self._load_generation:
+                return  # superseded by a newer load
+            if state["result"] is None:
+                if state["total"]:
+                    self._var_plot_status.set(
+                        f"Reading geometry... {state['done']}/{state['total']} files")
+                self.after(100, _poll)
+                return
+            self._on_bboxes_loaded(*state["result"])
+
+        threading.Thread(target=_worker, daemon=True).start()
+        self.after(100, _poll)
+
+    def _on_bboxes_loaded(self, bboxes, error):
+        self._loading = False
+        self._refresh_btn.configure(state="normal")
+        self._var_plot_status.set(f"Error reading geometry: {error}" if error else "")
+        self._folder_bbox_cache = bboxes
+        self._update_plot()
+
+    def schedule_bbox_redraw(self):
+        """Redraw shortly after the EM bounding box or tracking mode changes.
+
+        Only redraws once the plot has been drawn, so typing in the General
+        tab does not trigger a slow first read of all STL files.
+        """
+        if not self._plot_drawn or self._loading:
+            return
+        if self._redraw_job is not None:
+            self.after_cancel(self._redraw_job)
+        self._redraw_job = self.after(400, self._update_plot)
+
+    def _update_plot(self):
+        """Redraw the 2-D bounding-box overview."""
+        self._redraw_job = None
+        if self._loading:
+            return  # the finished load redraws with the current settings
+        if self._folder_bbox_cache is None:
+            self._start_loading()
+            return
+        bboxes = self._folder_bbox_cache
+
+        ax = self._ax
+        ax.clear()
+        ax.set_axis_on()
 
         proj = self._var_projection.get()
         idx_map = {"X–Y": (0, 1), "X–Z": (0, 2), "Y–Z": (1, 2)}
@@ -319,8 +480,13 @@ class GeometryTab(ttk.Frame):
         ix, iy = idx_map.get(proj, (0, 2))
         xlabel, ylabel = axis_labels.get(proj, ("", ""))
 
-        bboxes = self._compute_folder_bboxes()
+        em_bbox = self._get_em_bbox() if self._var_show_em_box.get() else None
+        if em_bbox is not None:
+            # The tracker accepts the corners in either order.
+            em_lo = np.minimum(np.asarray(em_bbox[0], float), np.asarray(em_bbox[1], float))
+            em_hi = np.maximum(np.asarray(em_bbox[0], float), np.asarray(em_bbox[1], float))
 
+        outside = []
         if not bboxes:
             ax.text(0.5, 0.5, "No geometry folders with STL files found",
                     ha="center", va="center", transform=ax.transAxes,
@@ -339,11 +505,43 @@ class GeometryTab(ttk.Frame):
                 ax.text(x0 + w * 0.02, y0 + h * 0.96, lbl,
                         fontsize=8, color=colour, fontweight="bold",
                         va="top", clip_on=True)
+                if em_bbox is not None and (np.any(lo < em_lo) or np.any(hi > em_hi)):
+                    outside.append(lbl)
 
+        is_em = self._is_em_mode()
+        if em_bbox is not None:
+            # Drawn last and on top so it stands out against the geometry.
+            label = "EM bounding box" if is_em else "EM bounding box (not used by ray tracing)"
+            ax.add_patch(Rectangle(
+                (em_lo[ix], em_lo[iy]), em_hi[ix] - em_lo[ix], em_hi[iy] - em_lo[iy],
+                linewidth=2.4, linestyle="--", edgecolor="#111827",
+                facecolor="none", zorder=5))
+            # A plain dashed line reads better in the legend than a patch box.
+            ax.legend(handles=[Line2D([], [], linestyle="--", linewidth=2.0,
+                                      color="#111827", label=label)],
+                      fontsize=7, loc="best", framealpha=0.85)
+
+        if bboxes or em_bbox is not None:
             ax.set_aspect("equal", adjustable="datalim")
             ax.autoscale_view()
             # Small margin
             ax.margins(0.06)
+
+        names = ", ".join(outside)
+        if em_bbox is None:
+            msg, colour = "", "#b91c1c"
+        elif is_em:
+            msg = (f"Warning: {names} extend(s) outside the EM bounding box. EM tracking "
+                   "stops each particle when it leaves the box, so no power is "
+                   "deposited on those parts outside it.") if outside else ""
+            colour = "#b91c1c"
+        else:
+            msg = "Ray tracing does not use the EM bounding box; it only limits EM tracing."
+            if outside:
+                msg += f" With EM tracing, {names} would extend outside it."
+            colour = "#64748b"
+        self._var_bbox_warning.set(msg)
+        self._bbox_warning_lbl.configure(foreground=colour)
 
         ax.set_xlabel(xlabel, fontsize=9)
         ax.set_ylabel(ylabel, fontsize=9)
@@ -351,6 +549,7 @@ class GeometryTab(ttk.Frame):
         ax.grid(True, linewidth=0.4, alpha=0.5)
         self._fig.tight_layout()
         self._canvas.draw_idle()
+        self._plot_drawn = True
 
     # ------------------------------------------------------------------
     #  collect / refresh

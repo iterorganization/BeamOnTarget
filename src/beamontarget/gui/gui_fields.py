@@ -76,15 +76,17 @@ class FieldsTab(ttk.Frame):
         ef = cfg.get("EXTERNAL_FIELD", {})
         comps = _parse_components(ef)
 
+        body = self._build_scroll_body()
+
         # --- Magnetic Field card ---
-        b_card = make_card(self, "Magnetic Field", pady=(12, 10))
+        b_card = make_card(body, "Magnetic Field", pady=(12, 10))
         b_modes = ["None", "Fixed value", "Field file (.fld)", "X profile file (x,value)"]
         for i, (label, key) in enumerate([("Bx:", "Bx"), ("By:", "By"), ("Bz:", "Bz")]):
             self._make_comp_row(b_card, i, label, key, b_modes, comps.get(key, {}))
         b_card.columnconfigure(2, weight=1)
 
         # --- Electric Field card ---
-        e_card = make_card(self, "Electric Field")
+        e_card = make_card(body, "Electric Field")
         e_modes = ["None", "Fixed value", "Field file (.fld)", "X profile file (x,value)"]
         ey_modes = ["None", "Fixed value", "Field file (.fld)", "X profile file (x,value)", "ERID (simplified)"]
         for i, (label, key, modes) in enumerate([
@@ -94,7 +96,7 @@ class FieldsTab(ttk.Frame):
         e_card.columnconfigure(2, weight=1)
 
         # --- Larmor Radius estimate card ---
-        lr_card = make_card(self, "Larmor Radius Estimate")
+        lr_card = make_card(body, "Larmor Radius Estimate")
 
         param_row = ttk.Frame(lr_card, style="Card.TFrame")
         param_row.pack(fill="x", pady=(0, 4))
@@ -120,7 +122,7 @@ class FieldsTab(ttk.Frame):
             side="left", padx=(12, 0))
 
         # --- Field line probe plotter card ---
-        probe_card = make_card(self, "Field Line Probe Plotter")
+        probe_card = make_card(body, "Field Line Probe Plotter")
 
         content_row = ttk.Frame(probe_card, style="Card.TFrame")
         content_row.pack(fill="both", expand=True)
@@ -174,10 +176,49 @@ class FieldsTab(ttk.Frame):
         self._probe_fig = Figure(figsize=(6.8, 3.6), dpi=100)
         self._probe_ax = self._probe_fig.add_subplot(111)
         self._probe_canvas = FigureCanvasTkAgg(self._probe_fig, master=plot_frm)
-        self._probe_canvas.get_tk_widget().pack(fill="both", expand=True)
         self._probe_toolbar = NavigationToolbar2Tk(self._probe_canvas, plot_frm, pack_toolbar=False)
         self._probe_toolbar.update()
+        # Pack the toolbar before the canvas so it keeps its height when the
+        # window is short; the canvas then shrinks into the remaining space.
         self._probe_toolbar.pack(side="bottom", fill="x")
+        self._probe_canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def _build_scroll_body(self):
+        """Return a frame inside a vertically scrollable canvas filling the tab.
+
+        The cards are taller than small windows; without scrolling the probe
+        plot and its controls were squeezed and cut off.
+        """
+        bg = ttk.Style(self).lookup("TFrame", "background")
+        canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0, bg=bg)
+        vscroll = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        body = ttk.Frame(canvas)
+        body.bind("<Configure>",
+                  lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        body_id = canvas.create_window((0, 0), window=body, anchor="nw")
+        # Keep the cards as wide as the visible area.
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(body_id, width=e.width))
+        canvas.configure(yscrollcommand=vscroll.set)
+        vscroll.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        def _on_wheel(event):
+            # Only scroll while the pointer is over this tab.
+            w = self.winfo_containing(event.x_root, event.y_root)
+            if w is None or not str(w).startswith(str(self)):
+                return
+            if event.num == 4:
+                step = -1
+            elif event.num == 5:
+                step = 1
+            else:
+                step = -1 if event.delta > 0 else 1
+            canvas.yview_scroll(step * 3, "units")
+
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.bind_all(seq, _on_wheel, add="+")
+        return body
 
     def _plot_field_probe(self):
         """Plot selected E/B components sampled along a user-defined line."""

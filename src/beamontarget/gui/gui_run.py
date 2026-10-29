@@ -17,9 +17,6 @@ import threading
 from beamontarget.gui.gui_widgets import (
     make_card,
     _SCRIPT_DIR,
-    choose_font_family,
-    supports_symbol_fonts,
-    symbol_text,
 )
 
 # ---------------------------------------------------------------------------
@@ -81,15 +78,7 @@ class RunTab(ttk.Frame):
         self._queued_config_paths = []
         self._sim_process = None
         self._stop_requested = False
-        self._font_family = choose_font_family()
-        self._supports_symbol_fonts = supports_symbol_fonts(self._font_family)
         self._build()
-
-    def _choose_font_family(self):
-        return choose_font_family()
-
-    def _symbol_label(self, symbol, fallback=""):
-        return symbol_text(symbol, fallback, self._font_family)
 
     # ------------------------------------------------------------------
     #  Build UI
@@ -100,21 +89,21 @@ class RunTab(ttk.Frame):
         btn_row = ttk.Frame(btn_card, style="Card.TFrame")
         btn_row.pack(fill="x")
 
-        ttk.Button(btn_row, text=f"{self._symbol_label('💾', '')} Save Config", style="Secondary.TButton",
+        ttk.Button(btn_row, text="Save Config", style="Secondary.TButton",
                     command=self._save_ext).pack(side="left", padx=(0, 4))
-        ttk.Button(btn_row, text=f"{self._symbol_label('💾', '')} Save As...", style="Secondary.TButton",
+        ttk.Button(btn_row, text="Save As...", style="Secondary.TButton",
                     command=self._save_as_ext).pack(side="left", padx=4)
-        ttk.Button(btn_row, text=f"{self._symbol_label('📂', '')} Load Config...", style="Secondary.TButton",
+        ttk.Button(btn_row, text="Load Config...", style="Secondary.TButton",
                     command=self._load_config_ext).pack(side="left", padx=4)
 
         ttk.Separator(btn_row, orient="vertical").pack(side="left", fill="y",
                                                          padx=12, pady=2)
 
-        ttk.Button(btn_row, text=f"{self._symbol_label('▶', '')} Run Simulation", style="Accent.TButton",
+        ttk.Button(btn_row, text="Run Simulation", style="Accent.TButton",
                     command=self._run_sim).pack(side="left", padx=4)
-        ttk.Button(btn_row, text=f"{self._symbol_label('↻', '')} Run Smoothing Only", style="Secondary.TButton",
+        ttk.Button(btn_row, text="Run Smoothing Only", style="Secondary.TButton",
                 command=self._run_smoothing_only).pack(side="left", padx=4)
-        ttk.Button(btn_row, text=f"{self._symbol_label('⏹', '')} Stop", style="Danger.TButton",
+        ttk.Button(btn_row, text="Stop", style="Danger.TButton",
                     command=self._stop_sim).pack(side="left", padx=4)
 
         # SLURM submission checkbox (Linux/HPC only — hidden on Windows)
@@ -214,7 +203,7 @@ class RunTab(ttk.Frame):
         self.log_text.delete("1.0", "end")
         self.log_text.config(state="disabled")
         mode_label = "simulation" if mode == "simulation" else "smoothing"
-        self._log(f"▶ Starting {mode_label} queue with {len(cfg_paths)} configuration file(s)…\n\n")
+        self._log(f"Starting {mode_label} queue with {len(cfg_paths)} configuration file(s)…\n\n")
         self._set_status(f"{mode_label.capitalize()} queue running…")
 
         def _worker():
@@ -240,24 +229,24 @@ class RunTab(ttk.Frame):
                         rc = self._run_single_job(mode, cfg_path, _tee)
                         if rc == 0:
                             successes += 1
-                            _tee("✔ Completed successfully.\n")
+                            _tee("Completed successfully.\n")
                         else:
                             failures += 1
-                            _tee(f"✖ Failed with return code {rc}.\n")
+                            _tee(f"FAILED with return code {rc}.\n")
                 except Exception as e:
-                    _tee(f"\n✖ Error: {e}\n")
+                    _tee(f"\nERROR: {e}\n")
                     self.after(0, lambda: self._set_status(f"{mode_label.capitalize()} error"))
                     return
 
                 if self._stop_requested:
                     self.after(0, lambda: self._set_status(f"{mode_label.capitalize()} queue stopped"))
-                    _tee("\n⏹ Queue stopped by user.\n")
+                    _tee("\nQueue stopped by user.\n")
                 elif failures == 0:
                     self.after(0, lambda: self._set_status(f"{mode_label.capitalize()} queue completed successfully"))
-                    _tee(f"\n✔ Queue complete: {successes} succeeded, {failures} failed.\n")
+                    _tee(f"\nQueue complete: {successes} succeeded, {failures} failed.\n")
                 else:
                     self.after(0, lambda: self._set_status(f"{mode_label.capitalize()} queue completed with failures"))
-                    _tee(f"\n✖ Queue complete: {successes} succeeded, {failures} failed.\n")
+                    _tee(f"\nQueue complete with FAILURES: {successes} succeeded, {failures} failed.\n")
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -310,7 +299,7 @@ class RunTab(ttk.Frame):
         self._stop_requested = True
         if self._sim_process and self._sim_process.poll() is None:
             self._sim_process.terminate()
-            self._log("\n⏹ Simulation terminated by user.\n")
+            self._log("\nSimulation terminated by user.\n")
             self._set_status("Simulation stopped")
 
     def _log(self, text):
