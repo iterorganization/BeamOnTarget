@@ -90,10 +90,10 @@ def main():
     parser.add_argument(
         "-n", "--normal_threshold",
         type=float,
-        default=getattr(config, "SMOOTHING_NORMAL_THRESHOLD_DEG", 7.0),
+        default=config.SMOOTHING_NORMAL_THRESHOLD_DEG,
         help=(
             f"Normal angle threshold in degrees for neighbour filtering.\n"
-            f"Defaults to {getattr(config, 'SMOOTHING_NORMAL_THRESHOLD_DEG', 7.0)}."
+            f"Defaults to {config.SMOOTHING_NORMAL_THRESHOLD_DEG}."
         ),
     )
     args = parser.parse_args()

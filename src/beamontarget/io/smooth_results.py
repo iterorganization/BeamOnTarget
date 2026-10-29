@@ -287,9 +287,8 @@ def main(argv=None):
     else:
         max_cell_area = args.max_cell_area if args.max_cell_area > 0 else None
 
-    # Use getattr to safely get the attribute from the config module
     normal_threshold = args.normal_threshold if args.normal_threshold is not None else \
-                       getattr(config, "SMOOTHING_NORMAL_THRESHOLD_DEG", 7.0)
+                       config.SMOOTHING_NORMAL_THRESHOLD_DEG
 
     output_root = config.DETAILED_OUTPUT_DIR
     if not os.path.isdir(output_root):

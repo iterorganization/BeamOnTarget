@@ -309,7 +309,7 @@ python -m beamontarget.io.batch_smoother -i OUTPUT/my_beam_run
 ### VTP Data Extraction (CLI)
 
 ```bash
-python -m beamontarget.io.extract_mesh_data input.vtp -o output.csv
+python -m beamontarget.io.extract_mesh_data -i input.vtp -o output.csv -p Power_Density_W_m2 Deposited_Power_W area
 ```
 
 ---

@@ -102,7 +102,7 @@ def extract_data_to_file(input_vtp, output_txt, properties_to_extract, filter_ze
         if prop_name in mesh.cell_data:
             print(f"  - Extracting '{prop_name}'...")
             # Apply the mask to the property data to keep it in sync
-            df[prop_name] = mesh.cell_data[prop_name][valid_coords_mask]*0.6
+            df[prop_name] = mesh.cell_data[prop_name][valid_coords_mask]
         else:
             print(f"  - WARNING: Property '{prop_name}' not found in VTP cell data. Skipping.")
 

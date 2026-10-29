@@ -263,14 +263,14 @@ class RunTab(ttk.Frame):
 
     def _run_single_job(self, mode, cfg_path, log_fn):
         cfg_path = os.path.abspath(cfg_path)
-        sm_radius, sm_mca_text = self._get_smoothing_params()
+        sm_radius, sm_mca_text, sm_angle = self._get_smoothing_params()
 
         if mode == "simulation":
             module_name = _RUN_SIMULATION_MODULE
             argv = ["-i", cfg_path]
         else:
             module_name = _RUN_SMOOTHING_MODULE
-            argv = ["-i", cfg_path, "-r", str(sm_radius)]
+            argv = ["-i", cfg_path, "-r", str(sm_radius), "-n", str(sm_angle)]
             if sm_mca_text:
                 argv += ["-a", sm_mca_text]
 

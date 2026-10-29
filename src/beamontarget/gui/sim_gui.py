@@ -835,6 +835,7 @@ class SimGUI(tk.Tk):
             get_smoothing_params=lambda: (
                 self._output_tab.var_sm_radius.get(),
                 self._output_tab.var_sm_mca.get().strip(),
+                self._output_tab.var_sm_angle.get(),
             ),
         )
         nb.add(self._run_tab, text=f"  {self._symbol_label('▶', '')} Run  ")
@@ -1087,7 +1088,7 @@ class _ExtractDialog(tk.Toplevel):
         btn_frm = ttk.Frame(self)
         btn_frm.grid(row=9, column=0, columnspan=3, pady=12)
 
-        ttk.Button(btn_frm, text=f"{self._symbol_label('💾', '')} Save CSV",
+        ttk.Button(btn_frm, text=f"{parent._symbol_label('💾', '')} Save CSV",
                     command=self._do_extract).pack(side="left", padx=4)
         ttk.Button(btn_frm, text="Cancel",
                     command=self.destroy).pack(side="left", padx=4)
