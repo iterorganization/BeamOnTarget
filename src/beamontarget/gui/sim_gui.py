@@ -40,6 +40,7 @@ from beamontarget.gui.gui_widgets import (
 from beamontarget.gui.gui_fields import FieldsTab
 from beamontarget.gui.gui_reactions import ReactionsTab
 from beamontarget.gui.gui_results import ResultsTab
+from beamontarget.gui.gui_merge import MergeTab
 from beamontarget.gui.gui_geometry import GeometryTab
 from beamontarget.gui.gui_particles import ParticlesTab
 from beamontarget.gui.gui_output import OutputTab
@@ -107,13 +108,21 @@ def _pv_results_script(results_dir):
     vtp_files = sorted(glob.glob(os.path.join(results_dir, "**", "*.vtp"), recursive=True))
     if not vtp_files:
         return None
+    return _pv_files_script(vtp_files)
+
+
+def _pv_files_script(vtp_files):
+    """Return a Python script that opens the given .vtp files, coloured by power density."""
     lines = [
         "from paraview.simple import *",
         "paraview.simple._DisableFirstRenderCameraReset()",
         "rv = GetActiveViewOrCreate('RenderView')",
     ]
-    for vtp in vtp_files:
-        name = os.path.splitext(os.path.basename(vtp))[0]
+    stems = [os.path.splitext(os.path.basename(v))[0] for v in vtp_files]
+    for vtp, stem in zip(vtp_files, stems):
+        # Prefix the folder when the same file name occurs in several scenarios.
+        name = (f"{os.path.basename(os.path.dirname(vtp))}/{stem}"
+                if stems.count(stem) > 1 else stem)
         lines.append(f"reader = XMLPolyDataReader(FileName=[r'{vtp}'])")
         lines.append(f"dp = Show(reader, rv)")
         lines.append(f"dp.SetRepresentationType('Surface')")
@@ -359,6 +368,9 @@ class SimGUI(tk.Tk):
                          font=("DejaVu Sans", 10))
         style.configure("Card.TCheckbutton", background=CARD_BG,
                          foreground=FG, font=("DejaVu Sans", 10))
+        style.configure("Card.TRadiobutton", background=CARD_BG,
+                         foreground=FG, font=("DejaVu Sans", 10))
+        style.map("Card.TRadiobutton", background=[("active", CARD_BG)])
 
         # Treeview
         style.configure("Treeview", background="white", foreground=FG,
@@ -458,6 +470,7 @@ class SimGUI(tk.Tk):
         self._build_output_tab(notebook)
         self._build_run_tab(notebook)
         self._build_results_tab(notebook)
+        self._build_merge_tab(notebook)
 
     # ------------------------------------------------------------------
     #  Menu bar
@@ -823,6 +836,21 @@ class SimGUI(tk.Tk):
         )
         nb.add(self._results_tab, text="  Results  ")
 
+    # ------------------------------------------------------------------
+    #  MERGE tab (delegated to gui_merge.py)
+    # ------------------------------------------------------------------
+    def _build_merge_tab(self, nb):
+        self._merge_tab = MergeTab(
+            nb, self.cfg, self._colours,
+            get_output_dir=lambda: self.var_outdir.get(),
+            open_in_paraview_fn=self._open_files_in_paraview,
+        )
+        nb.add(self._merge_tab, text="  Merge  ")
+
+    def _open_files_in_paraview(self, files):
+        launch_paraview(_pv_files_script(files), self.var_pv_path.get(),
+                        self.var_pv_module.get())
+
 
     # ------------------------------------------------------------------
     #  RUN tab (delegated to gui_run.py)
@@ -904,6 +932,7 @@ class SimGUI(tk.Tk):
         self._geometry_tab.collect(d)
         self._particles_tab.collect(d)
         self._output_tab.collect(d)
+        self._merge_tab.collect(d)
         d["ENABLE_VISUALIZATION"] = self._results_tab.var_ENABLE_VISUALIZATION.get()
         return d
 
@@ -973,6 +1002,7 @@ class SimGUI(tk.Tk):
         self._geometry_tab.refresh(c)
         self._particles_tab.refresh(c)
         self._output_tab.refresh(c)
+        self._merge_tab.refresh(c)
         self._results_tab.var_ENABLE_VISUALIZATION.set(c.get("ENABLE_VISUALIZATION", True))
         # Fields - EM settings
         self.var_em_step.set(c.get("EM_STEP_LENGTH_M", 0.02))

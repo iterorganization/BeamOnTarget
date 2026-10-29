@@ -27,7 +27,7 @@ David Atteln
     Beamlet jitter in the EM tracker, face-normal checking in the result
     smoother, smoothing parameters exposed through the configuration file and
     GUI, post-smoothing workflow, energy-conserving "physical" smoothing with
-    per-cell error estimate.
+    per-cell error estimate, colour-group worst-case merge of scenarios.
 
 
 Adding yourself

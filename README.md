@@ -68,6 +68,7 @@ output files — all from a graphical interface or the command line.
 | `src/beamontarget/io/physical_smooth.py` | Energy-conserving "physical" smoothing with error estimate. |
 | `src/beamontarget/io/batch_smoother.py` | Applies smoothing to result `.vtp` files in a directory. |
 | `src/beamontarget/workflows/post_smooth.py` | Additional post-processing / smoothing utilities. |
+| `src/beamontarget/workflows/merge_results.py` | Cell-wise worst-case merge of scenarios (Merge tab). |
 | `src/beamontarget/io/generate_report.py` | Automated report generation from results. |
 | `src/beamontarget/io/extract_mesh_data.py` | CLI tool for extracting mesh cell data from `.vtp` to CSV. |
 | `pyproject.toml` | Modern Python packaging metadata (PEP 621). |
@@ -327,6 +328,30 @@ the Output tab):
   conservation error and χ²/dof (≈ 1 means as much smoothing as the
   statistics support). It is slower than the radius method (minutes for a
   mesh with millions of cells) and needs triangle meshes.
+
+### Worst-Case Merge (Merge tab)
+
+The Merge tab combines several scenarios into a worst-case envelope. Add one
+or more result folders (each holds one subfolder per scenario), choose raw or
+smoothed files and, optionally, a comma-separated name filter, then click
+*Load Scenarios*. Click a scenario to assign it to the active colour group;
+Shift+click assigns a range, and double-clicking a colour renames the group
+(the name is used as the output folder).
+
+For every group, the files of the same component are merged cell by cell:
+each cell takes all its arrays (totals, species, error arrays) from the
+scenario with the highest `Power_Density_W_m2` there, or `Deposited_Power_W`
+if selected. The *Merge plan* pane lists exactly which files go into which
+output before anything is run; *Open in ParaView* opens the selection.
+Results are written to
+
+```
+MERGED/<result folder>/<group>/merged_results_<component>[__smoothed].vtp
+```
+
+together with a `merge_sources.txt` per group folder, a `merge_log_<time>.csv`
+per run, and a `merged_from` field array in every merged file. The summed
+power of a merged file is an envelope, not a physical power.
 
 ### VTP Data Extraction (CLI)
 
