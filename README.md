@@ -63,6 +63,7 @@ output files — all from a graphical interface or the command line.
 | `src/beamontarget/engine/engine.py` | Core computational engine — power deposition calculation. |
 | `src/beamontarget/geometry/geometry.py` | Loading, processing, caching, and grouping of `.stl` meshes. |
 | `src/beamontarget/particles/particles.py` | Particle source classes and `.bl` file loading. |
+| `src/beamontarget/io/trajectory_export.py` | Records a sample of particle trajectories to `.vtp`. |
 | `src/beamontarget/io/output.py` | File output — `.vtp` saving and summary `.csv` reports. |
 | `src/beamontarget/io/smooth_results.py` | Core smoothing logic (library) and the smoothing CLI. |
 | `src/beamontarget/io/physical_smooth.py` | Energy-conserving "physical" smoothing with error estimate. |
@@ -316,6 +317,19 @@ field: `dt ≤ (2π/N) / (|q/m|·|B|)`. The step only shrinks where the field
 requires it; neutrals and weak-field regions keep the full step. 0 (default)
 turns it off. Shorter steps use up `EM_MAX_STEPS` sooner: the run reports how
 many particles were still in flight when the step budget ran out.
+
+### Trajectory export
+
+With `TRAJECTORY_EXPORT_ENABLED` (Output tab: *Save particle trajectories*)
+the tracks of `TRAJECTORY_EXPORT_MAX_PARTICLES` particles (default 200) are
+written to `<run output>/TRAJECTORIES/trajectories.vtp`, one polyline per
+particle, in both tracking modes. The sample is spread evenly over the beam
+origins, so every beamlet is represented. In EM mode each polyline ends at
+the particle's impact point (or where it left the bounding box); in ray mode
+a track is a straight line to its hit, or past the scene if it misses.
+Point arrays: `ParticleID`, `SourceIndex`, `ChargeState`, `KineticEnergy_eV`
+(from the particle's velocity, so it follows acceleration in electric fields)
+and `StepIndex`.
 
 ### Manual Smoothing
 

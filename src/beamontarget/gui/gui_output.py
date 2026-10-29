@@ -62,6 +62,29 @@ class OutputTab(ttk.Frame):
                     command=self._open_extract_dialog).pack(
                         anchor="w", pady=(8, 0))
 
+        # --- Trajectory export (both tracking modes) ---
+        traj_card = make_card(self, "Trajectory Export")
+        self.var_traj_enabled = tk.BooleanVar(value=self.cfg.get("TRAJECTORY_EXPORT_ENABLED", False))
+        ttk.Checkbutton(traj_card, text="Save particle trajectories (.vtp, for ParaView)",
+                        variable=self.var_traj_enabled,
+                        style="Card.TCheckbutton").grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(traj_card, text="Particles to record:", style="Card.TLabel").grid(
+            row=1, column=0, sticky="w", pady=4)
+        self.var_traj_max = tk.IntVar(value=self.cfg.get("TRAJECTORY_EXPORT_MAX_PARTICLES", 200))
+        ttk.Entry(traj_card, textvariable=self.var_traj_max, width=10).grid(
+            row=1, column=1, sticky="w", padx=(8, 0))
+        ttk.Label(traj_card, text="total, spread evenly over the beam origins",
+                  style="Card.TLabel", foreground=self._colours.get("dim", "#64748b")).grid(
+            row=1, column=2, sticky="w", padx=(8, 0))
+        ttk.Label(traj_card, text="Subfolder:", style="Card.TLabel").grid(
+            row=2, column=0, sticky="w", pady=4)
+        self.var_traj_dir = tk.StringVar(value=self.cfg.get("TRAJECTORY_EXPORT_DIR", "TRAJECTORIES"))
+        ttk.Entry(traj_card, textvariable=self.var_traj_dir, width=20).grid(
+            row=2, column=1, sticky="w", padx=(8, 0))
+        ttk.Label(traj_card, text="inside each run's output folder",
+                  style="Card.TLabel", foreground=self._colours.get("dim", "#64748b")).grid(
+            row=2, column=2, sticky="w", padx=(8, 0))
+
         # --- Post-Processing Smoother card ---
         sm_card = make_card(self, "Post-Processing Smoother")
         self.var_smoother = tk.BooleanVar(value=self.cfg.get("RUN_SMOOTHER_AFTER_SIM", False))
@@ -155,6 +178,9 @@ class OutputTab(ttk.Frame):
         d["SMOOTHING_METHOD"] = self.smoothing_method()
         d["SMOOTHING_TARGET_REL_ERROR"] = self.var_sm_target_err.get()
         d["SMOOTHING_MAX_BANDWIDTH_M"] = self.var_sm_max_bw.get()
+        d["TRAJECTORY_EXPORT_ENABLED"] = self.var_traj_enabled.get()
+        d["TRAJECTORY_EXPORT_MAX_PARTICLES"] = self.var_traj_max.get()
+        d["TRAJECTORY_EXPORT_DIR"] = self.var_traj_dir.get().strip() or "TRAJECTORIES"
 
     def refresh(self, c):
         """Push config *c* values back into the widgets."""
@@ -172,3 +198,6 @@ class OutputTab(ttk.Frame):
                                                   _METHOD_LABELS["radius"]))
         self.var_sm_target_err.set(c.get("SMOOTHING_TARGET_REL_ERROR", 0.05))
         self.var_sm_max_bw.set(c.get("SMOOTHING_MAX_BANDWIDTH_M", 0.04))
+        self.var_traj_enabled.set(c.get("TRAJECTORY_EXPORT_ENABLED", False))
+        self.var_traj_max.set(c.get("TRAJECTORY_EXPORT_MAX_PARTICLES", 200))
+        self.var_traj_dir.set(c.get("TRAJECTORY_EXPORT_DIR", "TRAJECTORIES"))

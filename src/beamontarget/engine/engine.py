@@ -17,8 +17,9 @@ from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from beamontarget.interactions.field_provider import create_field_provider
 from beamontarget.interactions.reactions import create_reaction_model
-from beamontarget.interactions.em_tracker_v2 import trace_particle_batch_em_only
+from beamontarget.interactions.em_tracker_v2 import trace_particle_batch_em_only, SEGMENT_DTYPE
 from beamontarget.engine.trajectory_intersector import intersect_trajectory_segments_bvh
+from beamontarget.io.trajectory_export import TrajectoryRecorder, OriginQuotaTracker
 
 def _empty_particle_batch():
     return {
@@ -113,8 +114,61 @@ def _merge_impact_records(impact_data, chunk_impacts, save_impact_flags, max_imp
         impact_data[obj_idx]["stored_hits"] = len(reservoir)
 
 
+def _setup_trajectory_export(particle_sources_list, enabled, max_particles):
+    """Return (quota tracker, recorder) shared by all batches, or (None, None)."""
+    if not enabled:
+        return None, None
+    tracker = OriginQuotaTracker([int(s.source_index) for s in particle_sources_list], max_particles)
+    print(f"  - Trajectory export: {tracker.num_origins} origin(s), "
+          f"~{tracker.quota_per_origin} particle(s) per origin (target total ~{max_particles})")
+    if tracker.quota_per_origin <= 0:
+        print("  - WARNING: TRAJECTORY_EXPORT_MAX_PARTICLES is 0 - no trajectories will be recorded.")
+    return tracker, TrajectoryRecorder()
+
+
+def _save_trajectory_export(recorder, export_dir):
+    if recorder is None or not export_dir:
+        return
+    path = os.path.join(export_dir, "trajectories.vtp")
+    if recorder.save_vtp(path):
+        print(f"Saved particle trajectories: {recorder.n_particles_recorded} particle(s) -> {path}")
+    else:
+        print("Trajectory export enabled but no particles were recorded.")
+
+
+def _record_ray_trajectories(recorder, allowed_pids, particle_batch, index_ray, locations,
+                             scene_bounds, particle_id_offset):
+    """One straight segment per allowed ray: origin -> hit, or past the scene if it missed."""
+    pids = np.fromiter(sorted(allowed_pids), dtype=np.int64, count=len(allowed_pids))
+    origins = particle_batch["origins"][pids]
+    dirs = particle_batch["directions"][pids]
+    # A ray that hits nothing is drawn to the far side of the scene's bounding
+    # box (1 m in free space), so it visibly passes the geometry.
+    if scene_bounds is not None:
+        corners = np.array([[x, y, z] for x in scene_bounds[:, 0]
+                            for y in scene_bounds[:, 1] for z in scene_bounds[:, 2]])
+        miss_len = np.linalg.norm(corners[None, :, :] - origins[:, None, :], axis=2).max(axis=1)
+    else:
+        miss_len = np.ones(len(pids))
+    end = origins + dirs * miss_len[:, None]
+    if index_ray.size:
+        hit = np.isin(index_ray, pids)
+        end[np.searchsorted(pids, index_ray[hit])] = locations[hit]
+
+    seg = np.zeros(pids.size, dtype=SEGMENT_DTYPE)
+    seg["particle_id"] = pids.astype(np.int32)
+    seg["start_pos"] = origins.astype(np.float32)
+    seg["end_pos"] = end.astype(np.float32)
+    seg["charge_state"] = particle_batch["charge_states"][pids]
+    seg["kinetic_energy_ev"] = particle_batch["energies_ev"][pids]
+    seg["source_index"] = particle_batch["source_indices"][pids]
+    recorder.add_segments(seg, allowed_pids, particle_id_offset=particle_id_offset)
+
+
 def _process_particle_batch_ray(particle_batch, intersector, face_offsets, face_counts,
-                                deposition_model, save_impact_flags=None, max_impact_records=None):
+                                deposition_model, save_impact_flags=None, max_impact_records=None,
+                                trajectory_tracker=None, trajectory_recorder=None,
+                                trajectory_id_offset=0, scene_bounds=None):
     """
         WORKER FUNCTION: Processes one particle batch and returns sparse updates per object.
     Returns: (sparse_updates, impact_records)
@@ -133,14 +187,23 @@ def _process_particle_batch_ray(particle_batch, intersector, face_offsets, face_
     if max_impact_records is None:
         max_impact_records = [None] * num_objects
     impact_records = [{'hit_count': 0, 'data': []} for _ in range(num_objects)]
-    
-    if num_objects == 0:
-        # Free-space run: no geometry, so no intersections to test. Particles
-        # still travel, they simply have nothing to strike.
-        return sparse_updates, impact_records
 
     if particle_batch["origins"].size == 0:
         return sparse_updates, impact_records  # No particles; no updates
+
+    def _record(index_ray, locations):
+        if trajectory_tracker is None or trajectory_recorder is None:
+            return
+        allowed = trajectory_tracker.reserve(particle_batch["source_indices"])
+        if allowed:
+            _record_ray_trajectories(trajectory_recorder, allowed, particle_batch,
+                                     index_ray, locations, scene_bounds, trajectory_id_offset)
+
+    if num_objects == 0:
+        # Free-space run: no geometry, so no intersections to test. Particles
+        # still travel, they simply have nothing to strike.
+        _record(np.empty(0, dtype=np.intp), np.empty((0, 3)))
+        return sparse_updates, impact_records
 
     ray_origins = particle_batch["origins"]
     ray_directions = particle_batch["directions"]
@@ -227,12 +290,25 @@ def _process_particle_batch_ray(particle_batch, intersector, face_offsets, face_
                 impact_records[obj_idx]['data'].extend(
                     [tuple(row) for row in records_array])
 
+    _record(index_ray, locations)
     return sparse_updates, impact_records
+
+
+def _scene_bounds(scene_mesh):
+    """(2, 3) bounding box of the scene, or None without geometry."""
+    try:
+        b = np.asarray(scene_mesh.bounds, dtype=np.float64)
+        return b if b.shape == (2, 3) and np.all(np.isfinite(b)) else None
+    except Exception:
+        return None
 
 
 def run_simulation_single_hit(scene_mesh, face_offsets, face_counts, particle_sources_list,
                               deposition_model, particle_batch_size, num_cpu_cores,
-                              save_impact_flags=None, max_impact_records=None):
+                              save_impact_flags=None, max_impact_records=None,
+                              trajectory_export_enabled=False,
+                              trajectory_export_max_particles=200,
+                              trajectory_export_dir=None):
     """
     MANAGER FUNCTION: Dispatches chunks, combines power results and (optionally) impact data.
     Returns: (final_deposited_power, impact_data)
@@ -268,18 +344,28 @@ def run_simulation_single_hit(scene_mesh, face_offsets, face_counts, particle_so
     # Accumulators for impact data (reservoir sampling for unbiased selection)
     impact_data = _empty_impact_data(num_objects)
 
+    trajectory_tracker, trajectory_recorder = _setup_trajectory_export(
+        particle_sources_list, trajectory_export_enabled, trajectory_export_max_particles)
+    scene_bounds = _scene_bounds(scene_mesh) if trajectory_recorder is not None else None
+
     print(f"Processing ~{total_batches} Particle Batches (sequential)...")
     batch_iter = _iter_particle_batches(particle_sources_list, particle_batch_size)
-    for batch in tqdm(batch_iter, total=total_batches, desc="Processing Particle Batches"):
+    for batch_idx, batch in enumerate(tqdm(batch_iter, total=total_batches, desc="Processing Particle Batches")):
         sparse_chunk, chunk_impacts = _process_particle_batch_ray(
             batch, intersector, face_offsets, face_counts,
-            deposition_model, save_impact_flags, max_impact_records)
+            deposition_model, save_impact_flags, max_impact_records,
+            trajectory_tracker=trajectory_tracker, trajectory_recorder=trajectory_recorder,
+            # Batches never exceed particle_batch_size, so this keeps ids unique.
+            trajectory_id_offset=batch_idx * int(particle_batch_size),
+            scene_bounds=scene_bounds)
         # Apply sparse updates to the accumulator immediately
         for obj_idx, (idxs, vals) in enumerate(sparse_chunk):
             if idxs is None:
                 continue
             np.add.at(final_deposited_power[obj_idx], idxs, vals)
         _merge_impact_records(impact_data, chunk_impacts, save_impact_flags, max_impact_records)
+
+    _save_trajectory_export(trajectory_recorder, trajectory_export_dir)
 
     total_deposited = sum(arr.sum() for arr in final_deposited_power)
     print(f"Total power deposited: {total_deposited:.2f} W")
@@ -313,6 +399,9 @@ def run_simulation_em_track_then_bvh(
     max_impact_records=None,
     em_bvh_checkpoint_distance_m=None,
     em_min_steps_per_gyro_orbit=None,
+    trajectory_export_enabled=False,
+    trajectory_export_max_particles=200,
+    trajectory_export_dir=None,
 ):
     """
     Two-phase EM particle tracking:
@@ -372,6 +461,10 @@ def run_simulation_em_track_then_bvh(
 
     print(f"Processing ~{total_batches} particle batches (Phase 1 EM tracing + Phase 2 BVH)...")
 
+    # One recorder for the whole run (origins are spread over many batches).
+    trajectory_tracker, trajectory_recorder = _setup_trajectory_export(
+        particle_sources_list, trajectory_export_enabled, trajectory_export_max_particles)
+
     def _process_particle_batch_em(batch, seed):
         perf_stats = {
             "em_pure_s": 0.0,
@@ -381,6 +474,22 @@ def run_simulation_em_track_then_bvh(
         }
         field_provider = create_field_provider(external_field_cfg)
         reaction_model = create_reaction_model(reaction_model_cfg)
+
+        # This batch's share of the per-origin trajectory quota. *seed* is the
+        # batch index and batches never exceed particle_batch_size, so the
+        # offset makes particle ids unique across the run.
+        traj_pids = None
+        traj_offset = seed * int(particle_batch_size)
+        if trajectory_tracker is not None:
+            traj_pids = trajectory_tracker.reserve(batch["source_indices"]) or None
+
+        def _record_trajectories(segments, hit_info):
+            if traj_pids is None:
+                return
+            trajectory_recorder.add_segments(segments, traj_pids, particle_id_offset=traj_offset)
+            # Phase 1 tracks past the surface until a BVH pass retires the
+            # particle; end each polyline at its real impact point.
+            trajectory_recorder.truncate_at_impact(hit_info, particle_id_offset=traj_offset)
 
         # Accumulated sparse updates and impact records across all checkpoint passes
         all_sparse = [(None, None) for _ in face_counts]
@@ -419,6 +528,7 @@ def run_simulation_em_track_then_bvh(
                 save_impact_flags=save_impact_flags,
             )
             _merge_into_all(sparse_chunk, imp_chunk, species_chunk)
+            _record_trajectories(segments_chunk, hit_pids)
             return hit_pids
 
         run_stats = {}
@@ -454,6 +564,7 @@ def run_simulation_em_track_then_bvh(
         if perf_enabled:
             perf_stats["final_bvh_s"] += time.perf_counter() - final_bvh_started_at
         _merge_into_all(final_sparse, final_impacts, final_species)
+        _record_trajectories(trajectory_segments, final_hit_pids)
 
         # Consolidate duplicate triangle indices within each object
         consolidated = []
@@ -550,6 +661,8 @@ def run_simulation_em_track_then_bvh(
                         batches_submitted += 1
                     except StopIteration:
                         pass
+
+    _save_trajectory_export(trajectory_recorder, trajectory_export_dir)
 
     total_deposited = sum(arr.sum() for arr in final_deposited_power)
     print(f"Total power deposited: {total_deposited:.2f} W")

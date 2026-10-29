@@ -111,6 +111,11 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
         return
 
     output_dir_for_run = os.path.join(config.DETAILED_OUTPUT_DIR, output_subfolder)
+    trajectory_kwargs = dict(
+        trajectory_export_enabled=config.TRAJECTORY_EXPORT_ENABLED,
+        trajectory_export_max_particles=config.TRAJECTORY_EXPORT_MAX_PARTICLES,
+        trajectory_export_dir=os.path.join(output_dir_for_run, config.TRAJECTORY_EXPORT_DIR),
+    )
 
     # --- Engine Selection Logic ---
     tracking_mode = str(getattr(config, "TRACKING_MODE", "ray")).strip().lower()
@@ -126,6 +131,7 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
             num_cpu_cores=config.NUM_CPU_CORES,
             save_impact_flags=save_impact_flags_per_mesh,
             max_impact_records=max_impact_records_per_mesh,
+            **trajectory_kwargs,
         )
         per_species_power = {}  # not available in ray mode
     elif tracking_mode == "em_track_then_bvh":
@@ -163,6 +169,7 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
             max_impact_records=max_impact_records_per_mesh,
             em_bvh_checkpoint_distance_m=config.EM_BVH_CHECKPOINT_DISTANCE_M,
             em_min_steps_per_gyro_orbit=config.EM_MIN_STEPS_PER_GYRO_ORBIT,
+            **trajectory_kwargs,
         )
     else:
         raise ValueError(

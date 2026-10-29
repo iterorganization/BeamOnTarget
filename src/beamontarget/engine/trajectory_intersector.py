@@ -71,9 +71,15 @@ def intersect_trajectory_segments_bvh(
         deposition_model: function(energy_eV) -> fraction_deposited
     
     Returns:
-        (sparse_updates, impact_records)
+        (sparse_updates, impact_records, hit_info, sparse_by_species)
             sparse_updates: list of (index_array, value_array) tuples per object
             impact_records: list of dicts per object with 'hit_count' and 'data'
+            hit_info: {particle_id: (step_index, position, charge_state,
+                kinetic_energy_eV)} for every particle whose first impact is in
+                these segments.  Iterating it yields the particle ids, so it can
+                be used wherever a set of hit ids is expected; the details let
+                the trajectory recorder end each polyline at its impact point.
+            sparse_by_species: {charge_state: sparse_updates}
     """
     num_objects = len(face_counts)
     if save_impact_flags is None:
@@ -84,7 +90,7 @@ def intersect_trajectory_segments_bvh(
     if num_objects == 0 or len(trajectory_segments) == 0:
         # num_objects == 0 is a free-space run: EM integration still happens in
         # phase 1, there is simply no geometry for phase 2 to test against.
-        return sparse_updates, impact_records, set(), {}
+        return sparse_updates, impact_records, {}, {}
 
     # Keep only the earliest collision per particle after BVH testing.
 
@@ -130,7 +136,7 @@ def intersect_trajectory_segments_bvh(
 
     hit_mask = tri_ids != -1
     if not np.any(hit_mask):
-        return sparse_updates, impact_records, set(), {}
+        return sparse_updates, impact_records, {}, {}
 
     index_ray = np.where(hit_mask)[0]
     index_tri_global = tri_ids[hit_mask]
@@ -233,6 +239,12 @@ def intersect_trajectory_segments_bvh(
                 float(hit_currents[h]),
             ))
 
-    # index_ray is already filtered to earliest-hit-per-particle at this point
-    hit_pids = set(int(p) for p in trajectory_segments['particle_id'][index_ray])
-    return sparse_updates, impact_records, hit_pids, sparse_by_species
+    # index_ray is already filtered to earliest-hit-per-particle at this point,
+    # so there is one entry per particle: where and in which step it landed.
+    hit_info = {
+        int(pid): (int(step), position, int(charge), float(energy))
+        for pid, step, position, charge, energy in zip(
+            hit_segments['particle_id'], hit_segments['step_index'],
+            hit_positions, hit_charges, e_kinetic_eV)
+    }
+    return sparse_updates, impact_records, hit_info, sparse_by_species
