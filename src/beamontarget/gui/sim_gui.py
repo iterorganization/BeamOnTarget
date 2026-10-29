@@ -41,6 +41,7 @@ from beamontarget.gui.gui_fields import FieldsTab
 from beamontarget.gui.gui_reactions import ReactionsTab
 from beamontarget.gui.gui_results import ResultsTab
 from beamontarget.gui.gui_merge import MergeTab
+from beamontarget.gui.gui_transform import TransformTab
 from beamontarget.gui.gui_geometry import GeometryTab
 from beamontarget.gui.gui_particles import ParticlesTab
 from beamontarget.gui.gui_output import OutputTab
@@ -471,6 +472,7 @@ class SimGUI(tk.Tk):
         self._build_run_tab(notebook)
         self._build_results_tab(notebook)
         self._build_merge_tab(notebook)
+        self._build_transform_tab(notebook)
 
     # ------------------------------------------------------------------
     #  Menu bar
@@ -847,6 +849,16 @@ class SimGUI(tk.Tk):
         )
         nb.add(self._merge_tab, text="  Merge  ")
 
+    # ------------------------------------------------------------------
+    #  TRANSFORM tab (delegated to gui_transform.py)
+    # ------------------------------------------------------------------
+    def _build_transform_tab(self, nb):
+        self._transform_tab = TransformTab(
+            nb, self.cfg, self._colours,
+            get_output_dir=lambda: self.var_outdir.get(),
+        )
+        nb.add(self._transform_tab, text="  Transform  ")
+
     def _open_files_in_paraview(self, files):
         launch_paraview(_pv_files_script(files), self.var_pv_path.get(),
                         self.var_pv_module.get())
@@ -933,6 +945,7 @@ class SimGUI(tk.Tk):
         self._particles_tab.collect(d)
         self._output_tab.collect(d)
         self._merge_tab.collect(d)
+        self._transform_tab.collect(d)
         d["ENABLE_VISUALIZATION"] = self._results_tab.var_ENABLE_VISUALIZATION.get()
         return d
 
@@ -1003,6 +1016,7 @@ class SimGUI(tk.Tk):
         self._particles_tab.refresh(c)
         self._output_tab.refresh(c)
         self._merge_tab.refresh(c)
+        self._transform_tab.refresh(c)
         self._results_tab.var_ENABLE_VISUALIZATION.set(c.get("ENABLE_VISUALIZATION", True))
         # Fields - EM settings
         self.var_em_step.set(c.get("EM_STEP_LENGTH_M", 0.02))

@@ -69,6 +69,7 @@ output files — all from a graphical interface or the command line.
 | `src/beamontarget/io/batch_smoother.py` | Applies smoothing to result `.vtp` files in a directory. |
 | `src/beamontarget/workflows/post_smooth.py` | Additional post-processing / smoothing utilities. |
 | `src/beamontarget/workflows/merge_results.py` | Cell-wise worst-case merge of scenarios (Merge tab). |
+| `src/beamontarget/io/transform_results.py` | Coordinate transform and CSV / VTP export (Transform tab). |
 | `src/beamontarget/io/generate_report.py` | Automated report generation from results. |
 | `src/beamontarget/io/extract_mesh_data.py` | CLI tool for extracting mesh cell data from `.vtp` to CSV. |
 | `pyproject.toml` | Modern Python packaging metadata (PEP 621). |
@@ -352,6 +353,32 @@ MERGED/<result folder>/<group>/merged_results_<component>[__smoothed].vtp
 together with a `merge_sources.txt` per group folder, a `merge_log_<time>.csv`
 per run, and a `merged_from` field array in every merged file. The summed
 power of a merged file is an envelope, not a physical power.
+
+### Coordinate Transform (Transform tab)
+
+Exports raw, smoothed or merged result files from the beam-line frame to the
+Tokamak frame, as CSV (one row per cell) and/or VTP. The transform rotates
+about Z, then translates: `p' = R p + t`. The presets:
+
+| Frame | Rotation about Z | Translation X, Y, Z |
+|---|---|---|
+| HNB1 → Tokamak | −79.543° | −0.57723, 32.385248, 1.453462 m |
+| HNB2 → Tokamak | −59.543° | −11.618826, 30.234754, 1.453462 m |
+| HNB3 → Tokamak | −39.543° | −21.25902, 24.437503, 1.453462 m |
+| DNB → Tokamak | −116° | 11.410436, 26.617882, 0.920 m |
+
+Editing a value switches the preset to *Custom*. Everything is in metres, as
+in the simulation; a geometry in other units must be scaled in the geometry
+setup. The CSV holds the cell centres `X, Y, Z` [m], `Area` [m²],
+`Deposited_Power_W`, `Power_Density_W_m2` and `total_deposited_power_W` (sum
+over all cells, before zero filtering). The *power factor* multiplies every
+array that is linear in power, in the CSV and the VTP alike (totals,
+species, sigma/bias/p95, standard errors; sums of squares by the factor
+squared); ratios, `Smoothing_N_eff`, bandwidths and normals are unchanged,
+and `Normals` are rotated with the mesh. *Ignore zero-valued rows* drops
+cells whose selected power values are zero in the input file. Output goes to
+`TRANSFORMED/<result folder>/<scenario>/<scenario>__<file>.csv|.vtp`, and
+each VTP records the transform and factor in its field data.
 
 ### VTP Data Extraction (CLI)
 
