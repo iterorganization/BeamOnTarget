@@ -19,6 +19,7 @@ from beamontarget.interactions.field_provider import create_field_provider
 from beamontarget.interactions.reactions import create_reaction_model
 from beamontarget.interactions.em_tracker_v2 import trace_particle_batch_em_only, SEGMENT_DTYPE
 from beamontarget.engine.trajectory_intersector import intersect_trajectory_segments_bvh
+from beamontarget.engine.ray_threaded import intersects_location_first
 from beamontarget.io.trajectory_export import TrajectoryRecorder, OriginQuotaTracker
 
 def _empty_particle_batch():
@@ -168,7 +169,7 @@ def _record_ray_trajectories(recorder, allowed_pids, particle_batch, index_ray, 
 def _process_particle_batch_ray(particle_batch, intersector, face_offsets, face_counts,
                                 deposition_model, save_impact_flags=None, max_impact_records=None,
                                 trajectory_tracker=None, trajectory_recorder=None,
-                                trajectory_id_offset=0, scene_bounds=None):
+                                trajectory_id_offset=0, scene_bounds=None, ray_threads=1):
     """
         WORKER FUNCTION: Processes one particle batch and returns sparse updates per object.
     Returns: (sparse_updates, impact_records)
@@ -217,7 +218,13 @@ def _process_particle_batch_ray(particle_batch, intersector, face_offsets, face_
     # Sub-chunk the ray intersection to avoid memory allocation failures inside trimesh
     _RAY_SUB_CHUNK = 500_000
     n_rays = ray_origins.shape[0]
-    if n_rays <= _RAY_SUB_CHUNK:
+    if ray_threads > 1:
+        # Threaded embree query + vectorised hit locations; same hits, order
+        # and locations as the trimesh call below (see ray_threaded.py).
+        # NUM_CPU_CORES = 1 keeps the original trimesh path.
+        locations, index_ray, index_tri_global = intersects_location_first(
+            intersector, ray_origins, ray_directions, ray_threads)
+    elif n_rays <= _RAY_SUB_CHUNK:
         locations, index_ray, index_tri_global = intersector.intersects_location(
             ray_origins=ray_origins, ray_directions=ray_directions, multiple_hits=False)
     else:
@@ -357,7 +364,7 @@ def run_simulation_single_hit(scene_mesh, face_offsets, face_counts, particle_so
             trajectory_tracker=trajectory_tracker, trajectory_recorder=trajectory_recorder,
             # Batches never exceed particle_batch_size, so this keeps ids unique.
             trajectory_id_offset=batch_idx * int(particle_batch_size),
-            scene_bounds=scene_bounds)
+            scene_bounds=scene_bounds, ray_threads=n_jobs)
         # Apply sparse updates to the accumulator immediately
         for obj_idx, (idxs, vals) in enumerate(sparse_chunk):
             if idxs is None:
